@@ -1,0 +1,437 @@
+/* :host vale dentro do cartão do HA (shadow DOM), onde :root não alcança. */
+:root,
+:host {
+  color-scheme: dark;
+  --bg: #000;
+  --fg: #e8f6ff;
+  --muted: #8aa0ad;
+  --panel: rgba(16, 22, 28, 0.94);
+  --panel-line: rgba(255, 255, 255, 0.12);
+  --accent: #5ee7ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+body {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+/* Contêiner da tela do pet: tela inteira na página avulsa, o espaço do cartão no HA.
+   Legenda, aviso, teclado e painel dev se posicionam dentro dele. */
+.pet-root {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+  position: fixed;
+  inset: 0;
+}
+
+.pet-face,
+.pet-face svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.caption {
+  position: absolute;
+  left: 50%;
+  bottom: max(4vh, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  max-width: min(90vw, 900px);
+  padding: 0.5em 1.1em;
+  border-radius: 1em;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: clamp(18px, 3.4vmin, 36px);
+  line-height: 1.3;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+
+.caption.visible {
+  opacity: 1;
+}
+
+/* Faixa de data especial ("Parabéns!"): fixa no topo enquanto o HA mantiver o texto. */
+.banner {
+  position: absolute;
+  left: 50%;
+  top: max(3vh, env(safe-area-inset-top));
+  transform: translateX(-50%);
+  max-width: min(90vw, 900px);
+  padding: 0.3em 1.1em;
+  border-radius: 1em;
+  background: rgba(255, 95, 162, 0.18);
+  color: #ffd166;
+  font-size: clamp(20px, 4.2vmin, 44px);
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.6s;
+  pointer-events: none;
+}
+
+.banner.visible {
+  opacity: 1;
+}
+
+/* Dica de como falar com o pet: no lugar da legenda, mais apagada, longe do botão do teclado. */
+.hint {
+  position: absolute;
+  left: 50%;
+  bottom: max(4vh, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  max-width: calc(100% - 160px);
+  color: var(--muted);
+  font-size: clamp(14px, 2.6vmin, 24px);
+  line-height: 1.3;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.8s;
+  pointer-events: none;
+}
+
+.hint.visible {
+  opacity: 0.7;
+}
+
+/* Aviso de conexão: discreto, no topo, sem cobrir o rosto */
+.offline {
+  position: absolute;
+  top: max(10px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100vw - 32px);
+  padding: 6px 6px 6px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--muted);
+  font-size: clamp(13px, 1.8vmin, 17px);
+}
+
+.offline[hidden] {
+  display: none;
+}
+
+.offline::before {
+  content: '';
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff8a5e;
+}
+
+.offline button {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--fg);
+  font: inherit;
+}
+
+/* Pergunta por texto */
+.ask-toggle {
+  position: absolute;
+  left: max(14px, env(safe-area-inset-left));
+  bottom: max(14px, env(safe-area-inset-bottom));
+  width: 52px;
+  height: 52px;
+  padding: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.ask-toggle[hidden],
+.ask-bar[hidden] {
+  display: none;
+}
+
+.ask-toggle svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.ask-bar {
+  position: absolute;
+  left: 50%;
+  bottom: max(14px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 15;
+  display: flex;
+  gap: 8px;
+  width: min(720px, calc(100vw - 32px));
+  padding: 8px;
+  border: 1px solid var(--panel-line);
+  border-radius: 14px;
+  background: var(--panel);
+  touch-action: manipulation;
+  user-select: text;
+}
+
+.ask-bar input {
+  flex: 1;
+  min-width: 0;
+  min-height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--panel-line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--fg);
+  font: inherit;
+  font-size: 18px;
+}
+
+.ask-bar button {
+  min-height: 48px;
+  padding: 0 16px;
+  border: 1px solid var(--panel-line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--fg);
+  font: inherit;
+}
+
+.ask-bar button[type='submit'] {
+  border-color: transparent;
+  background: var(--accent);
+  color: #001820;
+  font-weight: 600;
+}
+
+/* Tela de setup */
+.setup {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.82);
+  touch-action: pan-y;
+  user-select: text;
+}
+
+.setup-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(460px, 100%);
+  margin: auto;
+  padding: 24px;
+  border: 1px solid var(--panel-line);
+  border-radius: 16px;
+  background: var(--panel);
+  font-size: 16px;
+}
+
+.setup-card h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+}
+
+.setup-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.setup-card input,
+.setup-card button {
+  min-height: 48px;
+  border: 1px solid var(--panel-line);
+  border-radius: 10px;
+  font: inherit;
+}
+
+.setup-card input {
+  padding: 0 12px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--fg);
+}
+
+.setup-card button {
+  padding: 0 16px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.setup-card .setup-primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: #001820;
+  font-weight: 600;
+}
+
+.setup-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+}
+
+.setup-divider::before,
+.setup-divider::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--panel-line);
+}
+
+.setup-hint {
+  margin: -6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.setup-error {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 94, 94, 0.14);
+  color: #ffb3b3;
+}
+
+.setup-version {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.setup-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.setup-actions button {
+  flex: 1;
+}
+
+/* Painel dev (?dev=1) */
+.dev-panel {
+  position: absolute;
+  z-index: 10;
+  top: 8px;
+  right: 8px;
+  width: min(340px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 10px;
+  border: 1px solid var(--panel-line);
+  border-radius: 12px;
+  background: var(--panel);
+  font-size: 14px;
+  touch-action: pan-y;
+  user-select: text;
+}
+
+.dev-panel.collapsed {
+  width: auto;
+}
+
+.dev-panel.collapsed > :not(.dev-toggle) {
+  display: none;
+}
+
+.dev-panel h3 {
+  margin: 10px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.dev-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 6px;
+}
+
+.dev-panel button,
+.dev-panel input {
+  min-height: 40px;
+  border: 1px solid var(--panel-line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--fg);
+  font: inherit;
+}
+
+.dev-panel button {
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+.dev-panel button.active {
+  border-color: var(--accent);
+  background: rgba(94, 231, 255, 0.18);
+}
+
+.dev-panel input {
+  width: 100%;
+  padding: 0 10px;
+}
+
+.dev-toggle {
+  width: 100%;
+  font-weight: 600;
+}
+
+.dev-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.dev-row > * {
+  flex: 1;
+}
+
+.dev-status {
+  margin-top: 8px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}

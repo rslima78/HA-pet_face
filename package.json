@@ -1,0 +1,30 @@
+{
+  "name": "pet-face",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Rosto animado de pet ligado ao Home Assistant",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build && vite build --mode card",
+    "preview": "vite preview",
+    "check": "tsc",
+    "test": "node --test tests/*.test.ts",
+    "mock": "node mock/server.ts",
+    "smoke": "node mock/smoke.ts"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "dependencies": {
+    "home-assistant-js-websocket": "^9.7.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/ws": "^8.18.2",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "ws": "^8.22.0",
+    "yaml": "^2.9.1"
+  }
+}

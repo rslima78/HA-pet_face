@@ -1,0 +1,2740 @@
+# Pet Face — pacote do Home Assistant
+#
+# Concentra a lógica do pet: a página (e, no futuro, a placa ESP32) só exibe
+# estas entidades. Tudo funciona com a página fechada.
+#
+# Instalação: docs/INSTALL.md. Depois de instalar, rode uma vez o script
+# "Pet · aplicar valores padrão" e coloque o rótulo "Pet presença" nos
+# sensores de movimento do cômodo do tablet.
+#
+# Requer Home Assistant 2026.7 ou mais novo (gatilhos motion.* e timer.*).
+
+# ---------------------------------------------------------------------------
+# Contrato com a página (nomes usados em pet.config.json)
+# ---------------------------------------------------------------------------
+
+input_select:
+  pet_mood:
+    name: "Pet · humor"
+    icon: mdi:emoticon-outline
+    options:
+      - dormindo
+      - neutro
+      - feliz
+      - curioso
+      - surpreso
+      - triste
+      - bravo
+      - pensando
+      - calor
+      - frio
+      - ouvindo
+  # Calculado por "Pet · clima" pela temperatura de weather.home. Alimenta o
+  # comentário do tempo (pet_comentario_clima), que mostra a cara de calor ou frio.
+  pet_clima:
+    name: "Pet · clima"
+    icon: mdi:thermometer
+    options:
+      - normal
+      - calor
+      - frio
+  # Enfeite de data especial, escolhido por "Pet · datas especiais".
+  pet_acessorio:
+    name: "Pet · acessório"
+    icon: mdi:party-popper
+    options:
+      - nenhum
+      - festa
+      - natal
+      - halloween
+
+input_text:
+  pet_message:
+    name: "Pet · mensagem"
+    icon: mdi:message-text-outline
+    max: 255
+  # Faixa fixa no topo da tela (ex.: "Parabéns!"); vazia some.
+  pet_faixa:
+    name: "Pet · faixa"
+    icon: mdi:flag-variant-outline
+    max: 100
+
+  # Lembretes por voz: três vagas. Cada uma guarda "humor|frase", a fala já
+  # pronta (escrita pela IA logo depois do pedido) para tocar sem espera.
+  pet_lembrete_1:
+    name: "Pet · lembrete 1"
+    icon: mdi:bell-ring-outline
+    max: 255
+  pet_lembrete_2:
+    name: "Pet · lembrete 2"
+    icon: mdi:bell-ring-outline
+    max: 255
+  pet_lembrete_3:
+    name: "Pet · lembrete 3"
+    icon: mdi:bell-ring-outline
+    max: 255
+
+input_boolean:
+  pet_sleep:
+    name: "Pet · dormindo"
+    icon: mdi:sleep
+  # Calculado pela automação "Pet · presença na sala" a partir dos sensores
+  # com o rótulo pet_presenca. Fica visível para depuração e para a placa ESP32.
+  pet_presenca:
+    name: "Pet · alguém na sala"
+    icon: mdi:account-eye-outline
+  # Se ligado, a saudação também é falada pelo satélite com o rótulo pet_satelite.
+  pet_falar_saudacao:
+    name: "Pet · falar saudações"
+    icon: mdi:account-voice
+  # Ligado enquanto o script pet_demo roda: as falas espontâneas esperam.
+  pet_demo:
+    name: "Pet · modo demo"
+    icon: mdi:presentation-play
+  # Modo foco (por voz): o pet fica quieto até timer.pet_foco acabar.
+  pet_foco:
+    name: "Pet · modo foco"
+    icon: mdi:target-account
+
+input_button:
+  pet_carinho:
+    name: "Pet · carinho"
+    icon: mdi:hand-heart-outline
+  # Segurar o dedo no rosto aperta este botão; a automação pet_ouvir faz o satélite ouvir.
+  pet_ouvir:
+    name: "Pet · ouvir"
+    icon: mdi:microphone-message
+
+# ---------------------------------------------------------------------------
+# Ajustes (mude pelo painel do HA, sem editar este arquivo)
+# Sem `initial:` para o HA guardar o valor entre reinícios. Os padrões
+# (15 min, 10 min, 22:00, 07:00) são gravados pelo script pet_aplicar_padroes.
+# ---------------------------------------------------------------------------
+
+input_number:
+  pet_ausencia_minutos:
+    name: "Pet · minutos sem movimento para dormir"
+    icon: mdi:timer-sand
+    min: 1
+    max: 120
+    step: 1
+    unit_of_measurement: min
+    mode: box
+  pet_saudacao_intervalo:
+    name: "Pet · intervalo mínimo entre saudações"
+    icon: mdi:timer-refresh-outline
+    min: 1
+    max: 240
+    step: 1
+    unit_of_measurement: min
+    mode: box
+  # Intervalo mínimo entre as conversas puxadas pela câmera do tablet
+  # (automação pet_rosto_conversa). Conta a partir de qualquer saudação.
+  pet_rosto_intervalo:
+    name: "Pet · intervalo entre conversas pela câmera"
+    icon: mdi:face-recognition
+    min: 5
+    max: 240
+    step: 5
+    unit_of_measurement: min
+    mode: box
+  # Brilho da tela do tablet (0-100). Requer o "Auto brightness" do VACA desligado.
+  pet_brilho_dia:
+    name: "Pet · brilho da tela acordado"
+    icon: mdi:brightness-7
+    min: 1
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    mode: slider
+  pet_brilho_dormindo:
+    name: "Pet · brilho da tela dormindo"
+    icon: mdi:brightness-4
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    mode: slider
+  # Uso do PC (G15, pelo HASS.Agent). Ver binary_sensor.pet_pc_em_uso.
+  # Os quatro lembretes do uso contínuo são conferidos a cada 10 minutos, por
+  # isso andam de 10 em 10.
+  pet_pc_olhos_minutos:
+    name: "Pet · minutos de PC para descansar os olhos"
+    icon: mdi:eye-refresh-outline
+    min: 10
+    max: 120
+    step: 10
+    unit_of_measurement: min
+    mode: box
+  pet_pc_pausa_minutos:
+    name: "Pet · minutos de PC para sugerir pausa"
+    icon: mdi:human-handsup
+    min: 10
+    max: 180
+    step: 10
+    unit_of_measurement: min
+    mode: box
+  pet_pc_agua_minutos:
+    name: "Pet · minutos de PC para lembrar da água"
+    icon: mdi:cup-water
+    min: 10
+    max: 240
+    step: 10
+    unit_of_measurement: min
+    mode: box
+  pet_pc_volta_minutos:
+    name: "Pet · minutos de pausa para dar boas-vindas"
+    icon: mdi:hand-wave-outline
+    min: 5
+    max: 240
+    step: 5
+    unit_of_measurement: min
+    mode: box
+  pet_foco_minutos:
+    name: "Pet · minutos do modo foco sem tempo dito"
+    icon: mdi:target
+    min: 5
+    max: 180
+    step: 5
+    unit_of_measurement: min
+    mode: box
+  pet_pc_piada_minutos:
+    name: "Pet · minutos de PC para a piada de tempo demais"
+    icon: mdi:emoticon-wink-outline
+    min: 30
+    max: 480
+    step: 30
+    unit_of_measurement: min
+    mode: box
+  pet_pc_ocioso_minutos:
+    name: "Pet · minutos sem mexer no PC para avisar do monitor"
+    icon: mdi:monitor-off
+    min: 1
+    max: 120
+    step: 1
+    unit_of_measurement: min
+    mode: box
+  pet_pc_monitor_aviso_minutos:
+    name: "Pet · minutos entre o aviso e desligar o monitor"
+    icon: mdi:timer-alert-outline
+    min: 1
+    max: 30
+    step: 1
+    unit_of_measurement: min
+    mode: box
+
+  # Clima: acima de pet_calor_graus é calor; abaixo de pet_frio_graus, frio.
+  pet_calor_graus:
+    name: "Pet · calor acima de"
+    icon: mdi:thermometer-high
+    min: 20
+    max: 40
+    step: 0.5
+    unit_of_measurement: "°C"
+    mode: box
+  pet_frio_graus:
+    name: "Pet · frio abaixo de"
+    icon: mdi:thermometer-low
+    min: 5
+    max: 28
+    step: 0.5
+    unit_of_measurement: "°C"
+    mode: box
+
+input_datetime:
+  pet_noite_inicio:
+    name: "Pet · início da noite"
+    icon: mdi:weather-night
+    has_date: false
+    has_time: true
+  pet_noite_fim:
+    name: "Pet · fim da noite"
+    icon: mdi:weather-sunset-up
+    has_date: false
+    has_time: true
+  # Carimbo da última saudação. Usado no lugar de `for:`/last_changed porque
+  # sobrevive a reinícios e a sensores indisponíveis.
+  pet_ultima_saudacao:
+    name: "Pet · última saudação"
+    icon: mdi:hand-wave-outline
+    has_date: true
+    has_time: true
+  # A partir desta hora (até pet_noite_fim), usar o PC rende convite para dormir.
+  pet_pc_dormir_hora:
+    name: "Pet · hora de mandar dormir"
+    icon: mdi:bed-clock
+    has_date: false
+    has_time: true
+  # Quando o PC deixou de estar em uso pela última vez. Sobrevive a reinícios;
+  # mede a pausa e diz se o uso de agora é o primeiro do dia.
+  pet_pc_ultimo_uso:
+    name: "Pet · último uso do PC"
+    icon: mdi:laptop
+    has_date: true
+    has_time: true
+  # Última refeição da Bela (o pet de verdade), anotada por voz. Não fica vazio:
+  # ao instalar, grave uma data antiga (mais de 30 dias = "nada anotado").
+  pet_bela_comeu:
+    name: "Pet · Bela comeu"
+    icon: mdi:food-drumstick-outline
+    has_date: true
+    has_time: true
+  # Último comentário de calor ou frio: no máximo um de manhã e um à tarde.
+  pet_comentario_clima:
+    name: "Pet · último comentário do tempo"
+    icon: mdi:thermometer-alert
+    has_date: true
+    has_time: true
+  # Último aviso de chuva; segura novos avisos por 6 horas.
+  pet_aviso_chuva:
+    name: "Pet · último aviso de chuva"
+    icon: mdi:weather-pouring
+    has_date: true
+    has_time: true
+
+timer:
+  # Contagem de ausência: começa quando todos os sensores param e é cancelada
+  # por qualquer movimento. A duração vem de pet_ausencia_minutos.
+  pet_ausencia:
+    name: "Pet · contagem de ausência"
+    icon: mdi:timer-outline
+    restore: true
+  pet_foco:
+    name: "Pet · tempo do modo foco"
+    icon: mdi:timer-sand-complete
+    restore: true
+  pet_lembrete_1:
+    name: "Pet · tempo do lembrete 1"
+    icon: mdi:bell-badge-outline
+    restore: true
+  pet_lembrete_2:
+    name: "Pet · tempo do lembrete 2"
+    icon: mdi:bell-badge-outline
+    restore: true
+  pet_lembrete_3:
+    name: "Pet · tempo do lembrete 3"
+    icon: mdi:bell-badge-outline
+    restore: true
+
+# ---------------------------------------------------------------------------
+# Uso do PC
+#
+# O PC (G15) entra pelo HASS.Agent (docs/PC.md). "Em uso" = sessão desbloqueada
+# e teclado ou mouse mexidos nos últimos 5 minutos. Uma pausa de 5 minutos ou
+# mais zera a contagem de uso contínuo. O `now()` faz o HA reavaliar a cada minuto.
+# ---------------------------------------------------------------------------
+
+template:
+  - binary_sensor:
+      - name: "Pet · PC em uso"
+        unique_id: pet_pc_em_uso
+        icon: mdi:laptop-account
+        state: >-
+          {% set ultima = states('sensor.g15_ultima_atividade') | as_datetime(none) %}
+          {{ is_state('sensor.g15_estado_sessao', 'Unlocked')
+             and ultima is not none
+             and (now() - ultima).total_seconds() < 300 }}
+      # Microfone ou webcam do PC em uso: chamada. O pet não fala e o Echo da
+      # sala fica em Não perturbe (automação pet_pc_chamada).
+      - name: "Pet · PC em chamada"
+        unique_id: pet_pc_em_chamada
+        icon: mdi:phone-in-talk-outline
+        state: >-
+          {{ is_state('binary_sensor.g15_microfone_ativo', 'on')
+             or is_state('binary_sensor.g15_webcam_ativa', 'on') }}
+
+# ---------------------------------------------------------------------------
+# Scripts
+# ---------------------------------------------------------------------------
+
+script:
+  pet_aplicar_padroes:
+    alias: "Pet · aplicar valores padrão"
+    description: "Grava os valores iniciais dos ajustes do pet. Rode uma vez após instalar."
+    icon: mdi:restore
+    mode: single
+    sequence:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.pet_ausencia_minutos
+        data:
+          value: 15
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.pet_saudacao_intervalo
+        data:
+          value: 10
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.pet_brilho_dia
+        data:
+          value: 60
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.pet_brilho_dormindo
+        data:
+          value: 3
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.pet_pc_olhos_minutos
+        data:
+          value: 20
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.pet_pc_pausa_minutos
+        data:
+          value: 30
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.pet_pc_agua_minutos
+        data:
+          value: 60
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.pet_pc_volta_minutos
+        data:
+          value: 10
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.pet_foco_minutos
+        data:
+          value: 25
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.pet_pc_dormir_hora
+        data:
+          time: "01:00:00"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.pet_pc_piada_minutos
+        data:
+          value: 120
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.pet_pc_ocioso_minutos
+        data:
+          value: 10
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.pet_pc_monitor_aviso_minutos
+        data:
+          value: 5
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.pet_calor_graus
+        data:
+          value: 29
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.pet_frio_graus
+        data:
+          value: 21
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.pet_rosto_intervalo
+        data:
+          value: 30
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.pet_noite_inicio
+        data:
+          time: "22:00:00"
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.pet_noite_fim
+        data:
+          time: "07:00:00"
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.pet_falar_saudacao
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.pet_mood
+        data:
+          option: neutro
+
+  # Muda a expressão do rosto. Usado pela automação "Pet · emoção pela fala" e
+  # por quem quiser (automações, painéis). Não precisa ficar exposto ao Assist:
+  # chamar uma ferramenta custa ao LLM uma ida e volta inteira (vários segundos).
+  pet_definir_emocao:
+    alias: "Pet · definir emoção"
+    description: >-
+      Muda a expressão do rosto do pet no tablet da sala. Use a cada resposta
+      para mostrar como você se sente: feliz, curioso, surpreso ou pensando; use
+      neutro para voltar ao normal. A expressão volta ao neutro
+      sozinha depois de um minuto.
+    icon: mdi:emoticon-happy-outline
+    mode: restart
+    fields:
+      emocao:
+        name: "Emoção"
+        description: "Expressão do rosto: neutro, feliz, curioso, surpreso ou pensando."
+        required: true
+        selector:
+          select:
+            options:
+              - neutro
+              - feliz
+              - curioso
+              - surpreso
+              - pensando
+    sequence:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.pet_sleep
+        note: "Se alguém mudou a emoção, alguém está interagindo com o pet: ele está acordado."
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.pet_mood
+        data:
+          option: "{{ emocao }}"
+
+  # Exposto ao Assist como ferramenta do LLM: o Assist só entrega o tempo atual,
+  # e sem isto o LLM inventa a previsão de amanhã.
+  pet_previsao_do_tempo:
+    alias: "Pet · previsão do tempo"
+    description: >-
+      Previsão do tempo da casa para hoje e os próximos três dias: condição,
+      temperatura máxima e mínima e chuva prevista em milímetros. Use em
+      perguntas sobre amanhã, o fim de semana ou os próximos dias.
+    icon: mdi:weather-partly-rainy
+    mode: parallel
+    sequence:
+      - action: weather.get_forecasts
+        target:
+          entity_id: weather.home
+        data:
+          type: daily
+        response_variable: previsao
+        note: "weather.home é a previsão desta casa (Forecast Casa); troque se usar outra."
+      - variables:
+          resultado: >-
+            {% set ns = namespace(dias=[]) %}
+            {% for d in previsao['weather.home'].forecast[:4] %}
+              {% set ns.dias = ns.dias + [{
+                'data': d.datetime[:10],
+                'condicao': d.condition,
+                'maxima': d.temperature,
+                'minima': d.get('templow'),
+                'chuva_mm': d.get('precipitation'),
+                'chance_de_chuva': d.get('precipitation_probability')
+              }] %}
+            {% endfor %}
+            {{ {'hoje': now().date() | string, 'dias': ns.dias} }}
+      - stop: "Previsão obtida"
+        response_variable: resultado
+
+  # O pet acorda, faz uma cara, mostra a frase e a fala pelo satélite do tablet.
+  # Não fala em modo foco nem em chamada (a frase fica só na tela).
+  # Depois de `pausa` segundos (10), volta ao neutro se ninguém mudou a cara.
+  pet_dizer:
+    alias: "Pet · dizer uma frase"
+    description: "Mostra e fala uma frase curta com uma expressão. Usado pelas automações do pet."
+    icon: mdi:account-voice
+    mode: queued
+    fields:
+      mensagem:
+        name: "Mensagem"
+        required: true
+        selector:
+          text:
+      humor:
+        name: "Expressão"
+        default: feliz
+        selector:
+          select:
+            options:
+              - neutro
+              - feliz
+              - curioso
+              - surpreso
+              - triste
+              - bravo
+              - pensando
+      falar:
+        name: "Falar em voz alta"
+        description: "Desligado, a frase aparece só na tela."
+        default: true
+        selector:
+          boolean:
+      forcar:
+        name: "Falar mesmo em foco ou chamada"
+        description: "Para o que o dono pediu, como um lembrete."
+        default: false
+        selector:
+          boolean:
+      pausa:
+        name: "Pausa depois da frase"
+        description: "Segundos com a cara depois da fala, antes de voltar ao neutro. A demo usa pausas curtas."
+        default: 10
+        selector:
+          number:
+            min: 0
+            max: 60
+            unit_of_measurement: s
+    sequence:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.pet_sleep
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.pet_mood
+        data:
+          option: "{{ humor | default('feliz') }}"
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.pet_message
+        data:
+          value: "{{ mensagem[:255] }}"
+      - if:
+          - condition: template
+            value_template: "{{ falar | default(true) }}"
+          - condition: or
+            conditions:
+              - condition: template
+                value_template: "{{ forcar | default(false) }}"
+              - condition: and
+                conditions:
+                  - condition: state
+                    entity_id: input_boolean.pet_foco
+                    state: "off"
+                  - condition: state
+                    entity_id: binary_sensor.pet_pc_em_chamada
+                    state: "off"
+        then:
+          - action: assist_satellite.announce
+            target:
+              label_id: pet_satelite
+            data:
+              message: "{{ mensagem }}"
+              preannounce: false
+            continue_on_error: true
+            note: "Sem satélite com o rótulo, ou com o tablet desligado, a frase fica só na tela."
+          - delay:
+              seconds: "{{ (2 + mensagem | length / 13) | round(1) }}"
+            note: >-
+              O announce do VACA volta na hora, sem esperar a fala, e o satélite segue
+              idle enquanto fala. Sem esta espera, a próxima frase corta a anterior.
+              Estimativa: 2 s para gerar a voz e ~13 caracteres por segundo.
+      - delay:
+          seconds: "{{ pausa | default(10) | int(10) }}"
+      - if:
+          - condition: template
+            value_template: "{{ is_state('input_select.pet_mood', humor | default('feliz')) }}"
+        then:
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.pet_mood
+            data:
+              option: neutro
+
+  # Demonstração para gravar em vídeo, em três blocos: as caras (faixa
+  # "Minhas caras"), as conversas (faixa "Conversando comigo": escuta simulada
+  # por pet_demo_ouvir, ação e resposta falada) e a despedida com soneca.
+  # Disparada por voz (automação pet_demo_voz).
+  pet_demo:
+    alias: "Pet · demonstração"
+    description: "Mostra o que o pet faz, do começo ao fim, e volta ao normal."
+    icon: mdi:presentation-play
+    mode: single
+    max_exceeded: silent
+    variables:
+      luz: switch.interruptor_sala_switch_1
+      tv_quarto: media_player.lg_webos_smart_tv
+    sequence:
+      - action: scene.create
+        data:
+          scene_id: pet_demo_antes
+          snapshot_entities:
+            - switch.interruptor_sala_switch_1
+            - input_select.pet_acessorio
+            - input_text.pet_faixa
+        note: "Guarda a luz e os enfeites para pet_demo_encerrar devolver como estavam."
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.pet_demo
+      - delay: "00:00:02"
+      - wait_template: "{{ not is_state('assist_satellite.vaca_d2538133b', 'responding') }}"
+        timeout: "00:00:20"
+        continue_on_timeout: true
+        note: "Espera o satélite terminar a apresentação."
+
+      # ── Bloco 1: as caras ─────────────────────────────────────────────
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.pet_faixa
+        data:
+          value: "Minhas caras"
+      - action: script.pet_dizer
+        data: {humor: feliz, forcar: true, pausa: 1, mensagem: "Eu moro aqui no tablet da sala e converso com todo mundo da casa."}
+      - action: script.pet_dizer
+        data: {humor: surpreso, forcar: true, pausa: 1, mensagem: "Eu tenho várias caras. Olha a de surpresa!"}
+      - action: script.pet_dizer
+        data: {humor: curioso, forcar: true, pausa: 1, mensagem: "Essa é a de curiosidade."}
+      - action: script.pet_dizer
+        data: {humor: pensando, forcar: true, pausa: 1, mensagem: "Essa é quando eu estou pensando…"}
+      - action: script.pet_dizer
+        data: {humor: calor, forcar: true, pausa: 1, mensagem: "Quando faz calor lá fora, eu fico suando…"}
+      - action: script.pet_dizer
+        data: {humor: frio, forcar: true, pausa: 1, mensagem: "E quando faz frio, eu tremo!"}
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.pet_acessorio
+        data:
+          option: festa
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.pet_faixa
+        data:
+          value: "Parabéns!"
+      - action: script.pet_dizer
+        data: {humor: feliz, forcar: true, pausa: 1, mensagem: "Em dia de aniversário, eu até coloco chapéu de festa!"}
+      - action: script.pet_dizer
+        data: {humor: feliz, forcar: true, pausa: 2, mensagem: "Mas a minha cara preferida é essa, de alegria!"}
+
+      # ── Intervalo: tela limpa antes das conversas ─────────────────────
+      - action: scene.turn_on
+        target:
+          entity_id: scene.pet_demo_antes
+        note: "Tira o chapéu e a faixa (volta ao enfeite que já estava)."
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.pet_mood
+        data:
+          option: neutro
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.pet_message
+        data:
+          value: ""
+      - delay: "00:00:03"
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.pet_faixa
+        data:
+          value: "Conversando comigo"
+      - action: script.pet_dizer
+        data: {humor: feliz, forcar: true, pausa: 2, mensagem: "Agora, veja como eu ajudo na casa. É só falar comigo!"}
+
+      # ── Bloco 2: conversas (escuta → frase captada → ação → resposta) ──
+      # Luz da sala
+      - action: script.pet_demo_ouvir
+        data: {frase: "Acende a luz da sala."}
+      - action: switch.turn_on
+        target:
+          entity_id: "{{ luz }}"
+        continue_on_error: true
+      - action: script.pet_dizer
+        data: {humor: feliz, forcar: true, pausa: 2, mensagem: "Pronto, acendi a luz da sala!"}
+      - action: script.pet_demo_ouvir
+        data: {frase: "Agora apaga, por favor."}
+      - action: switch.turn_off
+        target:
+          entity_id: "{{ luz }}"
+        continue_on_error: true
+      - action: script.pet_dizer
+        data: {humor: feliz, forcar: true, pausa: 2, mensagem: "Feito, luz apagada."}
+
+      # TV do quarto (só consulta, não mexe)
+      - action: script.pet_demo_ouvir
+        data: {frase: "A televisão do quarto está ligada?"}
+      - action: script.pet_dizer
+        data:
+          humor: "{{ 'surpreso' if states(tv_quarto) in ['on', 'idle', 'playing', 'paused'] else 'feliz' }}"
+          forcar: true
+          pausa: 2
+          mensagem: >-
+            {% if states(tv_quarto) in ['on', 'idle', 'playing', 'paused'] %}Está ligada, sim! Se quiser, eu desligo para você.
+            {%- else %}Não, a TV do quarto está desligada.{% endif %}
+
+      # Previsão do tempo
+      - action: script.pet_demo_ouvir
+        data: {frase: "Como vai estar o tempo amanhã?"}
+      - action: script.pet_previsao_do_tempo
+        response_variable: previsao
+        continue_on_error: true
+      - action: script.pet_dizer
+        data:
+          humor: feliz
+          forcar: true
+          pausa: 2
+          mensagem: >-
+            {% set nomes = {'sunny': 'sol', 'clear-night': 'céu limpo', 'partlycloudy': 'sol com nuvens',
+                            'cloudy': 'tempo nublado', 'rainy': 'chuva', 'pouring': 'chuva forte',
+                            'lightning': 'trovoadas', 'lightning-rainy': 'chuva com trovoadas',
+                            'fog': 'neblina', 'windy': 'vento', 'windy-variant': 'vento e nuvens'} %}
+            {% set d = (previsao.dias[1] if previsao is defined and previsao.dias | count > 1 else none) %}
+            {% if d %}Amanhã vai ter {{ nomes.get(d.condicao, d.condicao) }}, com máxima de {{ d.maxima | round(0) | int }}
+            {%- if d.minima is not none %} e mínima de {{ d.minima | round(0) | int }}{% endif %} graus.
+            {%- else %}Agora não consegui ver a previsão, mas é só me perguntar de novo depois.{% endif %}
+
+      # ── Bloco 3: o resto do dia a dia e despedida ─────────────────────
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.pet_faixa
+        data:
+          value: ""
+      - action: script.pet_dizer
+        data: {humor: feliz, forcar: true, pausa: 1, mensagem: "Quando você passa por mim, eu dou um oi e lembro de beber água, alongar e descansar os olhos."}
+      - action: script.pet_dizer
+        data: {humor: surpreso, forcar: true, pausa: 1, mensagem: "Também aviso da campainha, da chuva chegando, da porta aberta e da comida da Bela."}
+      - action: script.pet_dizer
+        data: {humor: feliz, forcar: true, pausa: 0, mensagem: "E quando ninguém está por perto, eu tiro uma soneca…"}
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.pet_sleep
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.pet_mood
+        data:
+          option: dormindo
+      - delay: "00:00:05"
+      - action: script.pet_dizer
+        data: {humor: feliz, forcar: true, pausa: 2, mensagem: "Mas é só dizer Ok Nabu que eu acordo! Foi um prazer, até mais!"}
+
+      - action: script.pet_demo_encerrar
+
+  # Simula, na demo, uma pessoa falando com o pet: rosto de escuta (anéis) com
+  # "Ouvindo…", depois a frase captada na legenda e falada com uma voz de
+  # homem (AntonioNeural), e um instante pensando. A ação e a resposta vêm em
+  # seguida, em pet_demo.
+  pet_demo_ouvir:
+    alias: "Pet · demo: simular escuta"
+    description: "Mostra a escuta e a frase captada, como se alguém tivesse falado com o pet."
+    icon: mdi:ear-hearing
+    mode: queued
+    fields:
+      frase:
+        name: "Frase captada"
+        required: true
+        selector:
+          text:
+      voz:
+        name: "Voz da pessoa"
+        description: "Voz do HA Cloud em pt-BR, diferente da do pet."
+        default: AntonioNeural
+        selector:
+          text:
+    variables:
+      voz: "{{ voz | default('AntonioNeural') }}"
+    sequence:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.pet_sleep
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.pet_mood
+        data:
+          option: ouvindo
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.pet_message
+        data:
+          value: "Ouvindo…"
+      - delay: "00:00:02"
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.pet_message
+        data:
+          value: "“{{ frase }}”"
+      - action: assist_satellite.announce
+        target:
+          label_id: pet_satelite
+        data:
+          media_id: >-
+            media-source://tts/tts.home_assistant_cloud?message={{ frase | urlencode }}&language=pt-BR&voice={{ voz }}
+          preannounce: false
+        continue_on_error: true
+        note: "A frase da pessoa, com outra voz (o pet fala com a BrendaNeural). Só na demo."
+      - delay:
+          seconds: "{{ (2 + frase | length / 13) | round(1) }}"
+        note: "Espera a fala acabar (o announce do VACA volta na hora), como em pet_dizer."
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.pet_mood
+        data:
+          option: pensando
+      - delay: "00:00:01"
+
+  # Devolve o pet ao normal: fim da demo ou "parar demo" no meio. Não desliga
+  # script.pet_demo: chamado de dentro da demo, morreria junto (mesmo com
+  # script.turn_on). Quem para a demo no meio é a automação pet_demo_voz.
+  pet_demo_encerrar:
+    alias: "Pet · encerrar demonstração"
+    description: "Para a demonstração e devolve a luz, os enfeites e o rosto ao normal."
+    icon: mdi:presentation
+    mode: single
+    sequence:
+      - action: scene.turn_on
+        target:
+          entity_id: scene.pet_demo_antes
+        continue_on_error: true
+        note: "Sem a cena (demo nunca rodou desde o último reinício), segue assim mesmo."
+      - action: input_boolean.turn_off
+        target:
+          entity_id:
+            - input_boolean.pet_demo
+            - input_boolean.pet_sleep
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.pet_mood
+        data:
+          option: neutro
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.pet_message
+        data:
+          value: ""
+
+  # Escreve com a IA a frase de um lembrete e guarda em input_text.pet_lembrete_N,
+  # para ela tocar na hora sem esperar a IA. Se a IA falhar, fica a frase simples
+  # que pet_lembrete_voz já gravou.
+  pet_lembrete_preparar:
+    alias: "Pet · preparar frase do lembrete"
+    description: "Pede à IA a frase personalizada de um lembrete e guarda na vaga."
+    icon: mdi:robot-happy-outline
+    mode: parallel
+    fields:
+      vaga:
+        name: "Vaga"
+        required: true
+        selector:
+          number:
+            min: 1
+            max: 3
+      tarefa:
+        name: "Tarefa"
+        required: true
+        selector:
+          text:
+    sequence:
+      - action: ai_task.generate_data
+        data:
+          task_name: "pet lembrete"
+          instructions: >-
+            Você é um pet virtual carinhoso e brincalhão que mora num tablet na
+            sala de uma família brasileira. O dono pediu: "me lembre de {{ tarefa }}".
+            Quando chegar a hora, você vai falar em voz alta. Escreva UMA frase curta
+            (até 15 palavras), em português do Brasil, começando com "Tá na hora de",
+            adaptando o pedido para soar natural e com um toque de personalidade
+            ligado ao contexto. Sem emojis, sem humor negro. Escolha também a
+            expressão do rosto que combina com o lembrete.
+          structure:
+            frase:
+              description: "Frase falada, começando com 'Tá na hora de'"
+              required: true
+              selector:
+                text:
+            humor:
+              description: "Expressão do rosto"
+              required: true
+              selector:
+                select:
+                  options:
+                    - feliz
+                    - curioso
+                    - surpreso
+                    - pensando
+        response_variable: resposta
+        continue_on_error: true
+        note: "Sem entity_id: usa a tarefa de IA padrão do HA (preferência gen_data_entity_id), hoje a da OpenRouter."
+      - if:
+          - condition: template
+            value_template: "{{ resposta is defined and resposta.data is defined and (resposta.data.frase | default('') | trim) != '' }}"
+          - alias: "O lembrete ainda está marcado"
+            condition: template
+            value_template: "{{ states('timer.pet_lembrete_' ~ vaga | int) in ['active', 'paused'] }}"
+        then:
+          - variables:
+              humor: >-
+                {% set h = resposta.data.humor | default('surpreso') %}
+                {{ h if h in ['feliz', 'curioso', 'surpreso', 'pensando'] else 'surpreso' }}
+              frase: "{{ resposta.data.frase | replace('|', ' ') | trim }}"
+          - action: input_text.set_value
+            target:
+              entity_id: "input_text.pet_lembrete_{{ vaga | int }}"
+            data:
+              value: "{{ (humor ~ '|' ~ frase)[:255] }}"
+
+# ---------------------------------------------------------------------------
+# Automações
+#
+# O satélite de voz do tablet é encontrado pelo rótulo pet_satelite (coloque-o
+# na entidade assist_satellite do tablet). Sem o rótulo, nada é falado e a voz
+# não acorda o pet; o resto funciona igual.
+# ---------------------------------------------------------------------------
+
+  # Pergunta da comida da Bela com resposta por voz. "Sim" anota a hora; "não"
+  # ou silêncio perguntam de novo em 30 minutos, até 4 vezes. Se alguém disser
+  # "dei comida para a Bela" no meio-tempo, para.
+  pet_perguntar_bela:
+    alias: "Pet · perguntar da comida da Bela"
+    description: "Pergunta se já deram comida para a Bela e espera sim ou não pela voz."
+    icon: mdi:food-drumstick-outline
+    mode: restart
+    variables:
+      satelite: >-
+        {{ label_entities('pet_satelite') | select('match', 'assist_satellite\.') | first
+           | default('assist_satellite.desconhecido') }}
+      inicio: "{{ now().timestamp() }}"
+    sequence:
+      - repeat:
+          sequence:
+            - wait_template: >-
+                {{ is_state('input_boolean.pet_foco', 'off')
+                   and is_state('binary_sensor.pet_pc_em_chamada', 'off') }}
+              timeout: "00:30:00"
+              continue_on_timeout: false
+              note: "Em foco ou chamada, espera acabar (até 30 min) antes de perguntar em voz alta."
+            - if:
+                - condition: template
+                  value_template: >-
+                    {% set t = state_attr('input_datetime.pet_bela_comeu', 'timestamp') %}
+                    {{ t is not none and t >= inicio }}
+              then:
+                - stop: "Alguém já anotou a comida por voz"
+            - variables:
+                pergunta: >-
+                  {% if repeat.first %}{{ ['Já deram comida para a Bela?',
+                      'Ei, e a Bela? Já deram comida para ela?',
+                      'Hora da comida da Bela! Alguém já deu?'] | random }}
+                  {%- else %}E aí, já deram comida para a Bela?{% endif %}
+            - action: input_boolean.turn_off
+              target:
+                entity_id: input_boolean.pet_sleep
+            - action: input_select.select_option
+              target:
+                entity_id: input_select.pet_mood
+              data:
+                option: curioso
+            - action: input_text.set_value
+              target:
+                entity_id: input_text.pet_message
+              data:
+                value: "{{ pergunta }}"
+            - action: assist_satellite.ask_question
+              data:
+                entity_id: "{{ satelite }}"
+                question: "{{ pergunta }}"
+                preannounce: false
+                answers:
+                  - id: sim
+                    sentences:
+                      - "sim"
+                      - "já"
+                      - "sim já"
+                      - "já sim"
+                      - "já deram"
+                      - "deram sim"
+                      - "já dei"
+                      - "dei sim"
+                      - "eu dei"
+                      - "já comeu"
+                      - "ela já comeu"
+                      - "comeu sim"
+                  - id: nao
+                    sentences:
+                      - "não"
+                      - "ainda não"
+                      - "não deram"
+                      - "não dei"
+                      - "ninguém deu"
+                      - "esqueci"
+                      - "não ainda"
+              response_variable: resposta
+              continue_on_error: true
+            - variables:
+                escolha: "{{ resposta.id if resposta is defined and resposta and resposta.id else 'silencio' }}"
+            - choose:
+                - conditions:
+                    - condition: template
+                      value_template: "{{ escolha == 'sim' }}"
+                  sequence:
+                    - action: input_datetime.set_datetime
+                      target:
+                        entity_id: input_datetime.pet_bela_comeu
+                      data:
+                        timestamp: "{{ now().timestamp() }}"
+                    - action: script.pet_dizer
+                      data:
+                        humor: feliz
+                        mensagem: "Oba! Anotei: a Bela comeu às {{ now().hour }}{{ ' horas' if now().minute == 0 else ' e ' ~ now().minute }}."
+                    - stop: "Bela alimentada"
+                - conditions:
+                    - condition: template
+                      value_template: "{{ escolha == 'nao' }}"
+                  sequence:
+                    - action: script.pet_dizer
+                      data:
+                        humor: curioso
+                        mensagem: "Então corre lá, ela deve estar com fome! Pergunto de novo em meia hora."
+              default:
+                - action: input_select.select_option
+                  target:
+                    entity_id: input_select.pet_mood
+                  data:
+                    option: neutro
+                  note: "Silêncio: pergunta de novo em 30 minutos, sem falar mais nada."
+            - wait_template: >-
+                {% set t = state_attr('input_datetime.pet_bela_comeu', 'timestamp') %}
+                {{ t is not none and t >= inicio }}
+              timeout: "00:30:00"
+              continue_on_timeout: true
+          until:
+            - "{{ wait.completed or repeat.index >= 4 }}"
+
+automation:
+  - id: pet_presenca
+    alias: "Pet · presença na sala"
+    description: >-
+      Mantém input_boolean.pet_presenca a partir dos sensores com o rótulo
+      pet_presenca: liga com qualquer movimento e desliga depois de
+      pet_ausencia_minutos sem movimento em nenhum deles.
+    mode: queued
+    max: 10
+    triggers:
+      - trigger: motion.detected
+        target:
+          label_id: pet_presenca
+        id: movimento
+      - trigger: motion.cleared
+        target:
+          label_id: pet_presenca
+        options:
+          behavior: all
+        id: parado
+        note: "Só dispara quando todos os sensores do rótulo estão parados."
+      - trigger: timer.finished
+        target:
+          entity_id: timer.pet_ausencia
+        id: ausente
+    actions:
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: movimento
+            sequence:
+              - action: timer.cancel
+                target:
+                  entity_id: timer.pet_ausencia
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.pet_presenca
+          - conditions:
+              - condition: trigger
+                id: parado
+            sequence:
+              - action: timer.start
+                target:
+                  entity_id: timer.pet_ausencia
+                data:
+                  duration: >-
+                    {% set m = states('input_number.pet_ausencia_minutos') | int(15) %}
+                    {{ '%02d:%02d:00' % (m // 60, m % 60) }}
+          - conditions:
+              - condition: trigger
+                id: ausente
+            sequence:
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.pet_presenca
+
+  - id: pet_acordar_e_saudar
+    alias: "Pet · acordar e saudar"
+    description: >-
+      Quando alguém chega à sala (ou a noite acaba com alguém lá), acorda o pet.
+      Se a última saudação foi há mais de pet_saudacao_intervalo minutos, ele
+      fica feliz e cumprimenta conforme o horário.
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.pet_presenca
+        from: "off"
+        to: "on"
+      - trigger: time
+        at: input_datetime.pet_noite_fim
+    conditions:
+      - condition: state
+        entity_id: input_boolean.pet_presenca
+        state: "on"
+      - condition: time
+        after: input_datetime.pet_noite_fim
+        before: input_datetime.pet_noite_inicio
+        note: "De dia. À noite o pet continua dormindo; só a voz o acorda."
+    actions:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.pet_sleep
+      - if:
+          - alias: "Intervalo desde a última saudação já passou"
+            condition: template
+            value_template: >-
+              {% set ultima = state_attr('input_datetime.pet_ultima_saudacao', 'timestamp') %}
+              {{ ultima is none
+                 or now().timestamp() - ultima >= (states('input_number.pet_saudacao_intervalo') | float(10)) * 60 }}
+        then:
+          - action: input_datetime.set_datetime
+            target:
+              entity_id: input_datetime.pet_ultima_saudacao
+            data:
+              timestamp: "{{ now().timestamp() }}"
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.pet_mood
+            data:
+              option: feliz
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.pet_message
+            data:
+              value: >-
+                {% set h = now().hour %}
+                {% if 5 <= h < 12 %}{% set opcoes = ['Bom dia!', 'Bom dia! Dormiu bem?', 'Oi, bom dia!'] %}
+                {% elif 12 <= h < 18 %}{% set opcoes = ['Boa tarde!', 'Oi! Boa tarde.', 'Que bom te ver. Boa tarde!'] %}
+                {% else %}{% set opcoes = ['Boa noite!', 'Oi, boa noite!'] %}{% endif %}
+                {{ opcoes | random }}
+          - if:
+              - condition: state
+                entity_id: input_boolean.pet_falar_saudacao
+                state: "on"
+            then:
+              - action: assist_satellite.announce
+                target:
+                  label_id: pet_satelite
+                data:
+                  message: "{{ states('input_text.pet_message') }}"
+                  preannounce: false
+                continue_on_error: true
+                note: "Sem satélite com o rótulo, ou com o tablet desligado, a saudação fica só na tela."
+          - delay: "00:00:08"
+          - if:
+              - condition: state
+                entity_id: input_select.pet_mood
+                state: feliz
+            then:
+              - action: input_select.select_option
+                target:
+                  entity_id: input_select.pet_mood
+                data:
+                  option: neutro
+        else:
+          - if:
+              - condition: state
+                entity_id: input_select.pet_mood
+                state: dormindo
+            then:
+              - action: input_select.select_option
+                target:
+                  entity_id: input_select.pet_mood
+                data:
+                  option: neutro
+
+  - id: pet_rosto_conversa
+    alias: "Pet · conversa ao ver alguém"
+    description: >-
+      Quando a câmera do tablet vê um rosto (de dia, fora do modo foco e de
+      chamada), o pet puxa conversa com uma frase alegre ("E aí?", "Tá tendo
+      uma boa tarde?") e, metade das vezes, uma dica: beber água, alongar ou
+      descansar. Só uma vez a cada pet_rosto_intervalo minutos, contados de
+      qualquer saudação, para não repetir a da chegada.
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: motion.detected
+        target:
+          entity_id: binary_sensor.vaca_d2538133b_motion
+        note: "Rosto pela câmera do tablet (modo face do VACA)."
+    conditions:
+      - condition: time
+        after: input_datetime.pet_noite_fim
+        before: input_datetime.pet_noite_inicio
+        note: "À noite o pet dorme; só a voz o acorda."
+      - condition: state
+        entity_id: input_boolean.pet_foco
+        state: "off"
+      - condition: state
+        entity_id: input_boolean.pet_demo
+        state: "off"
+      - condition: state
+        entity_id: binary_sensor.pet_pc_em_chamada
+        state: "off"
+    actions:
+      - delay: "00:00:05"
+        note: "Dá tempo de a saudação da chegada (mesmo rosto) gravar o carimbo antes."
+      - condition: template
+        value_template: >-
+          {% set ultima = state_attr('input_datetime.pet_ultima_saudacao', 'timestamp') %}
+          {{ ultima is none
+             or now().timestamp() - ultima >= (states('input_number.pet_rosto_intervalo') | float(30)) * 60 }}
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.pet_ultima_saudacao
+        data:
+          timestamp: "{{ now().timestamp() }}"
+      - action: script.pet_dizer
+        data:
+          humor: feliz
+          falar: "{{ is_state('input_boolean.pet_falar_saudacao', 'on') }}"
+          mensagem: >-
+            {% set h = now().hour %}
+            {% if h < 12 %}{% set oi = ['E aí?', 'Oi! Tá tendo uma boa manhã?', 'E aí, tudo certo por aí?', 'Que bom te ver!'] %}
+            {% elif h < 18 %}{% set oi = ['E aí?', 'Tá tendo uma boa tarde?', 'Oi! Como vai a tarde?', 'Que bom te ver!'] %}
+            {% else %}{% set oi = ['E aí? Como foi o dia?', 'Tá tendo uma boa noite?', 'Oi! Que bom te ver.', 'E aí, tudo certo?'] %}{% endif %}
+            {% set dicas = ['Que tal um copo de água?', 'Já bebeu água? Bora um gole!',
+                            'Que tal alongar um pouquinho? Estica os braços!',
+                            'Gira o pescoço devagar e respira fundo.',
+                            'Descansa os olhos: olha pela janela um pouquinho.',
+                            'Que tal uma pausa rápida para descansar?'] %}
+            {{ oi | random }}{{ (' ' ~ (dicas | random)) if range(2) | random else '' }}
+
+  - id: pet_dormir
+    alias: "Pet · dormir"
+    description: >-
+      O pet dorme quando a sala fica vazia, quando a noite começa, ou à noite
+      depois de 5 minutos acordado (por exemplo, após um carinho ou uma conversa)
+      ou quando o HA inicia.
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.pet_presenca
+        from: "on"
+        to: "off"
+        id: ausente
+      - trigger: time
+        at: input_datetime.pet_noite_inicio
+        id: noite
+      - trigger: state
+        entity_id: input_boolean.pet_sleep
+        to: "off"
+        for: "00:05:00"
+        id: soneca
+      - trigger: homeassistant
+        event: start
+        id: inicio
+        note: >-
+          O gatilho "soneca" só conta a partir de uma mudança; após um reinício
+          noturno com o pet acordado não haveria mudança e ele ficaria acordado.
+    conditions:
+      - condition: or
+        conditions:
+          - condition: trigger
+            id:
+              - ausente
+              - noite
+          - condition: time
+            after: input_datetime.pet_noite_inicio
+            before: input_datetime.pet_noite_fim
+    actions:
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.pet_sleep
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.pet_mood
+        data:
+          option: dormindo
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.pet_message
+        data:
+          value: ""
+
+  - id: pet_acordar_pela_voz
+    alias: "Pet · acordar pela voz"
+    description: >-
+      Falar com o pet o acorda a qualquer hora, inclusive à noite. À noite ele
+      volta a dormir sozinho 5 minutos depois (automação "Pet · dormir").
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: assist_satellite.listening
+        target:
+          label_id: pet_satelite
+    conditions:
+      - condition: state
+        entity_id: input_boolean.pet_sleep
+        state: "on"
+    actions:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.pet_sleep
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.pet_mood
+        data:
+          option: neutro
+
+  - id: pet_emocao_pela_fala
+    alias: "Pet · emoção pela fala"
+    description: >-
+      Quando o satélite do pet começa a falar a resposta de uma conversa, escolhe
+      a expressão do rosto pelo texto da resposta (palavras-chave), sem custar
+      uma chamada extra ao LLM. Anúncios (saudação, fala espontânea) não mudam o
+      texto do sensor de fala e já trazem a própria emoção, então ficam de fora.
+    mode: restart
+    triggers:
+      - trigger: assist_satellite.responding
+        target:
+          label_id: pet_satelite
+    variables:
+      # Sensor com o texto falado. No VACA: sensor.<mesmo id do satélite>_tts.
+      sensor_fala: >-
+        {{ (label_entities('pet_satelite') | select('match', 'assist_satellite\.') | first
+            | default('assist_satellite.desconhecido'))
+           | replace('assist_satellite.', 'sensor.') ~ '_tts' }}
+    actions:
+      - delay:
+          milliseconds: 400
+        note: "O VACA atualiza o sensor de fala logo depois de começar a responder."
+      - condition: template
+        value_template: >-
+          {{ states[sensor_fala] is not none
+             and (now() - states[sensor_fala].last_changed).total_seconds() < 5 }}
+        note: "Só respostas de conversa: o texto mudou agora."
+      - variables:
+          emocao: >-
+            {% set texto = states(sensor_fala) | lower %}
+            {% if texto is search('desculp|não consegui|nao consegui|infelizmente|não sei|não encontrei|não posso') %}{% set e = 'pensando' %}
+            {% elif texto is search('uau|nossa|incrível|que surpresa') %}{% set e = 'surpreso' %}
+            {% elif texto is search('parabéns|que bom|adoro|ótimo|pronto|feito|legal|obrigad') %}{% set e = 'feliz' %}
+            {% elif texto is search('\?\s*$') %}{% set e = 'curioso' %}
+            {% elif texto is search('acho que|deixe-me ver|vamos ver|hmm') %}{% set e = 'pensando' %}
+            {% else %}{% set e = 'neutro' %}{% endif %}
+            {{ e }}
+      - action: script.pet_definir_emocao
+        data:
+          emocao: "{{ emocao }}"
+
+  - id: pet_ouvir
+    alias: "Pet · ouvir ao segurar o rosto"
+    description: >-
+      Segurar o dedo no rosto do pet aperta input_button.pet_ouvir, e o satélite
+      começa a ouvir como se tivesse escutado a wake word. O botão é achado pelo
+      rótulo pet_satelite (convenção do VACA: button.<id do satélite>_wake).
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: input_button.pet_ouvir
+        not_from: unavailable
+        not_to: unavailable
+        note: "Ignora a volta de indisponível ao reiniciar o HA, que não é um toque."
+    variables:
+      botao_ouvir: >-
+        {{ (label_entities('pet_satelite') | select('match', 'assist_satellite\.') | first
+            | default('assist_satellite.desconhecido'))
+           | replace('assist_satellite.', 'button.') ~ '_wake' }}
+    conditions:
+      - condition: template
+        value_template: "{{ states[botao_ouvir] is not none }}"
+        note: "Sem satélite com o rótulo (ou sem botão de acordar), não faz nada."
+    actions:
+      - action: button.press
+        target:
+          entity_id: "{{ botao_ouvir }}"
+
+  - id: pet_brilho_da_tela
+    alias: "Pet · brilho da tela"
+    description: >-
+      Escurece a tela do tablet quando o pet dorme e devolve o brilho quando ele
+      acorda. O controle de brilho é achado pelo rótulo pet_satelite (convenção
+      do VACA: number.<id do satélite>_screen_brightness).
+    mode: restart
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.pet_sleep
+        to:
+          - "on"
+          - "off"
+      - trigger: state
+        entity_id:
+          - input_number.pet_brilho_dia
+          - input_number.pet_brilho_dormindo
+        note: "Mudou o ajuste no painel: aplica na hora."
+      - trigger: homeassistant
+        event: start
+    variables:
+      controle_brilho: >-
+        {{ (label_entities('pet_satelite') | select('match', 'assist_satellite\.') | first
+            | default('assist_satellite.desconhecido'))
+           | replace('assist_satellite.', 'number.') ~ '_screen_brightness' }}
+    conditions:
+      - condition: template
+        value_template: "{{ states[controle_brilho] is not none }}"
+        note: "Sem satélite com o rótulo (ou sem controle de brilho), não faz nada."
+    actions:
+      - action: number.set_value
+        target:
+          entity_id: "{{ controle_brilho }}"
+        data:
+          value: >-
+            {{ states('input_number.pet_brilho_dormindo') | int(3)
+               if is_state('input_boolean.pet_sleep', 'on')
+               else states('input_number.pet_brilho_dia') | int(60) }}
+
+  - id: pet_humor_volta_ao_normal
+    alias: "Pet · humor volta ao normal"
+    description: >-
+      Qualquer emoção (escolhida pelo LLM ou por outra automação) dura no máximo
+      um minuto; depois o rosto volta ao neutro, se o pet estiver acordado.
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: input_select.pet_mood
+        to:
+          - feliz
+          - curioso
+          - surpreso
+          - triste
+          - bravo
+          - pensando
+          - calor
+          - frio
+        for: "00:01:00"
+    conditions:
+      - condition: state
+        entity_id: input_boolean.pet_sleep
+        state: "off"
+      - condition: state
+        entity_id: input_boolean.pet_foco
+        state: "off"
+        note: "No modo foco a cara de concentrado vale até o tempo acabar."
+      - condition: state
+        entity_id: binary_sensor.pet_pc_em_chamada
+        state: "off"
+        note: "Durante a chamada a cara discreta vale até ela acabar."
+    actions:
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.pet_mood
+        data:
+          option: neutro
+
+  - id: pet_carinho
+    alias: "Pet · reagir ao carinho"
+    description: >-
+      Tocar no rosto do pet aperta input_button.pet_carinho. Ele acorda, fica
+      feliz por 10 segundos e responde com uma frase curta.
+    mode: restart
+    triggers:
+      - trigger: state
+        entity_id: input_button.pet_carinho
+        not_from: unavailable
+        not_to: unavailable
+        note: "Ignora a volta de indisponível ao reiniciar o HA, que não é um toque."
+    actions:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.pet_sleep
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.pet_mood
+        data:
+          option: feliz
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.pet_message
+        data:
+          value: >-
+            {{ ['Hehe, que carinho bom!', 'Adoro quando você faz isso.', 'De novo, de novo!', 'Obrigado!'] | random }}
+      - delay: "00:00:10"
+      - if:
+          - condition: state
+            entity_id: input_select.pet_mood
+            state: feliz
+        then:
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.pet_mood
+            data:
+              option: neutro
+
+  # Uso do PC. Os lembretes não falam em chamada (binary_sensor.pet_pc_em_chamada)
+  # nem no modo foco. Os tempos vêm dos ajustes pet_pc_* e pet_foco_minutos.
+  - id: pet_pc_pausas
+    alias: "Pet · lembretes no uso do PC"
+    description: >-
+      Enquanto o PC estiver em uso sem pausa, confere a cada 10 minutos quanto
+      tempo passou. Ao cruzar cada intervalo: piada de "tempo demais"
+      (pet_pc_piada_minutos), senão alongamento (pet_pc_pausa_minutos), senão
+      água (pet_pc_agua_minutos), senão olhos, só na tela (pet_pc_olhos_minutos).
+      Água junto com piada ou alongamento vira uma frase só. Depois de
+      pet_pc_dormir_hora, a pausa e a piada viram convite para dormir. Uma pausa
+      de 5 minutos zera a contagem.
+    mode: restart
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.pet_pc_em_uso
+        from: "off"
+        to: "on"
+    actions:
+      - repeat:
+          while:
+            - condition: state
+              entity_id: binary_sensor.pet_pc_em_uso
+              state: "on"
+          sequence:
+            - wait_for_trigger:
+                - trigger: state
+                  entity_id: binary_sensor.pet_pc_em_uso
+                  to: "off"
+              timeout: "00:10:00"
+              continue_on_timeout: true
+            - if:
+                - alias: "Os 10 minutos passaram sem pausa"
+                  condition: template
+                  value_template: "{{ wait.trigger is none }}"
+                - condition: state
+                  entity_id: binary_sensor.pet_pc_em_chamada
+                  state: "off"
+                - condition: state
+                  entity_id: input_boolean.pet_foco
+                  state: "off"
+                - condition: state
+                  entity_id: input_boolean.pet_demo
+                  state: "off"
+              then:
+                - variables:
+                    minutos: "{{ repeat.index * 10 }}"
+                    cruzou: >-
+                      {% set ns = namespace(r={}) %}
+                      {% for nome, padrao in [('olhos', 20), ('pausa', 30), ('agua', 60), ('piada', 120)] %}
+                        {% set n = states('input_number.pet_pc_' ~ nome ~ '_minutos') | float(padrao) | int %}
+                        {% set ns.r = dict(ns.r, **{nome: n > 0 and minutos // n > (minutos - 10) // n}) %}
+                      {% endfor %}
+                      {{ ns.r }}
+                    tempo: >-
+                      {% set h = minutos // 60 %}{% set m = minutos % 60 %}{% if h == 0 %}{{ m }} minutos{% else %}{{ h }} {{ 'hora' if h == 1 else 'horas' }}{{ (' e ' ~ m ~ ' minutos') if m else '' }}{% endif %}
+                    agua: "{{ ' E não esquece de beber água!' if cruzou.agua else '' }}"
+                - choose:
+                    - alias: "Madrugada: convite para dormir"
+                      conditions:
+                        - condition: template
+                          value_template: "{{ cruzou.pausa or cruzou.piada }}"
+                        - condition: time
+                          after: input_datetime.pet_pc_dormir_hora
+                          before: input_datetime.pet_noite_fim
+                      sequence:
+                        - action: script.pet_dizer
+                          data:
+                            humor: curioso
+                            mensagem: >-
+                              {{ ['Já passou da hora, hein? Amanhã você continua. Bora dormir?',
+                                  'Tá tarde! Que tal salvar tudo e ir dormir?',
+                                  'Seu eu de amanhã vai agradecer se você dormir agora.',
+                                  'Até eu estou com sono. Vamos dormir?'] | random }}
+                    - alias: "Piada de tempo demais"
+                      conditions:
+                        - condition: template
+                          value_template: "{{ cruzou.piada }}"
+                      sequence:
+                        - action: script.pet_dizer
+                          data:
+                            humor: curioso
+                            mensagem: >-
+                              {{ (['Ei, não está ficando tempo demais? Já são ' ~ tempo ~ ' de PC.',
+                                   'Por que não descansa um pouco? ' ~ tempo ~ ' direto aqui!',
+                                   'Tem certeza que não dá para fazer isso depois? Já são ' ~ tempo ~ '.',
+                                   tempo ~ ' de PC! Até eu já cansei de te olhar.'] | random) ~ agua }}
+                    - alias: "Alongamento"
+                      conditions:
+                        - condition: template
+                          value_template: "{{ cruzou.pausa }}"
+                      sequence:
+                        - action: script.pet_dizer
+                          data:
+                            humor: feliz
+                            mensagem: >-
+                              {{ (['Já faz ' ~ tempo ~ '. Que tal levantar e dar uma voltinha?',
+                                   'Hora de alongar! Estica os braços, gira o pescoço e respira fundo.',
+                                   'Pausa rápida? Levanta e anda um pouquinho.',
+                                   'Seu corpo agradece: levanta e alonga um pouco!'] | random) ~ agua }}
+                    - alias: "Água"
+                      conditions:
+                        - condition: template
+                          value_template: "{{ cruzou.agua }}"
+                      sequence:
+                        - action: script.pet_dizer
+                          data:
+                            humor: feliz
+                            mensagem: "{{ ['Bebeu água?', 'Hora de um gole de água!', 'Já bebeu água hoje? Pega um copo!'] | random }}"
+                    - alias: "Olhos (só na tela)"
+                      conditions:
+                        - condition: template
+                          value_template: "{{ cruzou.olhos }}"
+                      sequence:
+                        - action: script.pet_dizer
+                          data:
+                            humor: curioso
+                            falar: false
+                            mensagem: "{{ ['Descansa os olhos: olha para algo longe por 20 segundos.', 'Pisca um pouco e olha pela janela por 20 segundos.'] | random }}"
+
+  - id: pet_pc_chegada
+    alias: "Pet · chegada ao PC"
+    description: >-
+      Guarda quando o PC deixou de ser usado. Ao voltar: no primeiro uso do dia
+      (entre pet_noite_fim e pet_noite_inicio), cumprimenta e conta a previsão;
+      depois de uma pausa de pet_pc_volta_minutos ou mais, dá boas-vindas.
+    mode: queued
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.pet_pc_em_uso
+        from: "on"
+        to: "off"
+        id: saiu
+      - trigger: state
+        entity_id: binary_sensor.pet_pc_em_uso
+        from: "off"
+        to: "on"
+        id: voltou
+    actions:
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: saiu
+            sequence:
+              - action: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.pet_pc_ultimo_uso
+                data:
+                  timestamp: "{{ now().timestamp() - 300 }}"
+                note: "O sensor desliga 5 minutos depois do último uso."
+          - conditions:
+              - condition: trigger
+                id: voltou
+              - condition: state
+                entity_id: binary_sensor.pet_pc_em_chamada
+                state: "off"
+              - condition: state
+                entity_id: input_boolean.pet_foco
+                state: "off"
+              - condition: state
+                entity_id: input_boolean.pet_demo
+                state: "off"
+            sequence:
+              - variables:
+                  ultimo: "{{ state_attr('input_datetime.pet_pc_ultimo_uso', 'timestamp') }}"
+                  primeiro_hoje: "{{ ultimo is none or (ultimo | as_datetime | as_local).date() < now().date() }}"
+                  pausa_min: "{{ 99999 if ultimo is none else ((now().timestamp() - ultimo) / 60) | int }}"
+              - choose:
+                  - alias: "Início dos trabalhos"
+                    conditions:
+                      - condition: template
+                        value_template: "{{ primeiro_hoje }}"
+                      - condition: time
+                        after: input_datetime.pet_noite_fim
+                        before: input_datetime.pet_noite_inicio
+                    sequence:
+                      - action: script.pet_previsao_do_tempo
+                        response_variable: previsao
+                        continue_on_error: true
+                      - action: script.pet_dizer
+                        data:
+                          humor: feliz
+                          mensagem: >-
+                            {% set h = now().hour %}
+                            {% set oi = 'Bom dia!' if h < 12 else 'Boa tarde!' if h < 18 else 'Boa noite!' %}
+                            {% set nomes = {'sunny': 'sol', 'clear-night': 'céu limpo', 'partlycloudy': 'parcialmente nublado',
+                                            'cloudy': 'nublado', 'rainy': 'chuva', 'pouring': 'chuva forte',
+                                            'lightning': 'trovoadas', 'lightning-rainy': 'chuva com trovoadas',
+                                            'fog': 'neblina', 'windy': 'vento', 'windy-variant': 'vento e nuvens'} %}
+                            {% set d = (previsao.dias[0] if previsao is defined and previsao.dias else none) %}
+                            {% if d %}{{ oi }} Bora começar? Hoje: {{ nomes.get(d.condicao, d.condicao) }}, máxima de {{ d.maxima | round(0) | int }} graus.
+                            {% else %}{{ oi }} Bora começar o dia?{% endif %}
+                  - alias: "Volta da pausa"
+                    conditions:
+                      - condition: template
+                        value_template: "{{ pausa_min >= states('input_number.pet_pc_volta_minutos') | float(10) }}"
+                    sequence:
+                      - action: script.pet_dizer
+                        data:
+                          humor: feliz
+                          mensagem: "{{ ['Bem-vindo de volta! Descansou?', 'Oi de novo! Foi bom o intervalo?', 'Voltou! Bora continuar?'] | random }}"
+
+  - id: pet_pc_monitor
+    alias: "Pet · desligar o monitor parado"
+    description: >-
+      Depois de pet_pc_ocioso_minutos sem mexer no PC desbloqueado, o pet avisa
+      que vai desligar o monitor; se ninguém mexer em pet_pc_monitor_aviso_minutos,
+      desliga. Não age em chamada nem com som tocando (vídeo, música).
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: sensor.g15_ultima_atividade
+        to: ~
+        for: >-
+          {% set m = states('input_number.pet_pc_ocioso_minutos') | float(10) | int %}
+          {{ '%02d:%02d:00' % (m // 60, m % 60) }}
+    conditions:
+      - condition: state
+        entity_id: sensor.g15_estado_sessao
+        state: Unlocked
+      - condition: state
+        entity_id: binary_sensor.pet_pc_em_chamada
+        state: "off"
+      - alias: "Sem som tocando no PC"
+        condition: numeric_state
+        entity_id: sensor.g15_audio_pico
+        below: 1
+    actions:
+      - variables:
+          aviso: "{{ states('input_number.pet_pc_monitor_aviso_minutos') | float(5) | int }}"
+      - action: script.pet_dizer
+        data:
+          humor: curioso
+          mensagem: "Vou desligar o monitor daqui a {{ aviso }} {{ 'minuto' if aviso == 1 else 'minutos' }}, viu?"
+      - wait_for_trigger:
+          - trigger: state
+            entity_id: sensor.g15_ultima_atividade
+            to: ~
+        timeout: "{{ '%02d:%02d:00' % (aviso // 60, aviso % 60) }}"
+        continue_on_timeout: true
+      - if:
+          - alias: "Ninguém mexeu no PC durante o aviso"
+            condition: template
+            value_template: "{{ wait.trigger is none }}"
+          - condition: state
+            entity_id: sensor.g15_estado_sessao
+            state: Unlocked
+          - condition: numeric_state
+            entity_id: sensor.g15_audio_pico
+            below: 1
+        then:
+          - action: button.press
+            target:
+              entity_id: button.g15_desligar_monitor
+        else:
+          - if:
+              - condition: template
+                value_template: "{{ wait.trigger is not none }}"
+            then:
+              - action: script.pet_dizer
+                data:
+                  humor: feliz
+                  mensagem: "Opa, você voltou! Deixo o monitor ligado, então."
+
+  - id: pet_pc_chamada
+    alias: "Pet · chamada no PC"
+    description: >-
+      Com microfone ou webcam do PC em uso por 30 s, o Echo da sala entra em Não
+      perturbe e o pet fica com cara de concentrado. Um minuto depois do fim da
+      chamada, o Não perturbe volta como estava.
+    mode: queued
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.pet_pc_em_chamada
+        from: "off"
+        to: "on"
+        for: "00:00:30"
+        id: inicio
+      - trigger: state
+        entity_id: binary_sensor.pet_pc_em_chamada
+        from: "on"
+        to: "off"
+        for: "00:01:00"
+        id: fim
+    actions:
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: inicio
+            sequence:
+              - action: scene.create
+                data:
+                  scene_id: pet_antes_da_chamada
+                  snapshot_entities:
+                    - switch.echo_sala_l_do_not_disturb
+                    - switch.echo_sala_r_do_not_disturb
+              - action: switch.turn_on
+                target:
+                  entity_id:
+                    - switch.echo_sala_l_do_not_disturb
+                    - switch.echo_sala_r_do_not_disturb
+                continue_on_error: true
+              - if:
+                  - condition: state
+                    entity_id: input_boolean.pet_sleep
+                    state: "off"
+                then:
+                  - action: input_select.select_option
+                    target:
+                      entity_id: input_select.pet_mood
+                    data:
+                      option: pensando
+          - conditions:
+              - condition: trigger
+                id: fim
+            sequence:
+              - action: scene.turn_on
+                target:
+                  entity_id: scene.pet_antes_da_chamada
+                continue_on_error: true
+                note: "Depois de um reinício no meio da chamada a cena não existe mais."
+              - if:
+                  - condition: state
+                    entity_id: input_select.pet_mood
+                    state: pensando
+                  - condition: state
+                    entity_id: input_boolean.pet_foco
+                    state: "off"
+                then:
+                  - action: input_select.select_option
+                    target:
+                      entity_id: input_select.pet_mood
+                    data:
+                      option: neutro
+
+  - id: pet_demo_voz
+    alias: "Pet · demonstração por voz"
+    description: >-
+      "Modo demo" ou "quem é você" (frases locais) apresentam o pet e rodam
+      script.pet_demo. "Parar demo" encerra no meio e volta ao normal.
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: conversation
+        command:
+          - "[(ativar|iniciar|começar|liga|ligar)] [o] modo (demo|demonstração)"
+          - "(faz|faça|fazer) [uma] demonstração"
+          - "quem (é|e) você"
+        id: inicio
+      - trigger: conversation
+        command:
+          - "(parar|encerrar|cancelar|sair do|desligar) [o] [modo] (demo|demonstração)"
+        id: fim
+    actions:
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: inicio
+            sequence:
+              - action: script.turn_on
+                target:
+                  entity_id: script.pet_demo
+                note: "script.turn_on não espera: a apresentação sai já, e a demo segue depois dela."
+              - set_conversation_response: "Olá, sou sua assistente de Casa Inteligente! Deixa eu te mostrar o que eu posso fazer."
+          - conditions:
+              - condition: trigger
+                id: fim
+            sequence:
+              - action: script.turn_off
+                target:
+                  entity_id: script.pet_demo
+              - action: script.pet_demo_encerrar
+              - set_conversation_response: "Tudo bem, demonstração encerrada."
+
+  - id: pet_foco_voz
+    alias: "Pet · modo foco por voz"
+    description: >-
+      "Modo foco 25 minutos" (ou só "modo foco", que usa pet_foco_minutos): o pet
+      fica quieto, com cara de concentrado, até o tempo acabar. "Parar modo foco"
+      encerra antes. Frases locais: não passam pelo LLM.
+    mode: restart
+    triggers:
+      - trigger: conversation
+        command:
+          - "[ativar] [o] modo foco [(de|por)] {minutos} minutos"
+          - "foco [(de|por)] {minutos} minutos"
+          - "[ativar] [o] modo foco"
+        id: inicio
+      - trigger: conversation
+        command:
+          - "(parar|encerrar|cancelar|sair do|desligar) [o] modo foco"
+          - "acabou o foco"
+        id: fim
+    actions:
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: inicio
+            sequence:
+              - variables:
+                  minutos: >-
+                    {% set padrao = states('input_number.pet_foco_minutos') | float(25) | int %}
+                    {% set m = (trigger.slots.minutos | default('') | string | regex_findall('\d+') | first | default(padrao)) | int(padrao) %}
+                    {{ [[m, 1] | max, 180] | min }}
+              - action: timer.start
+                target:
+                  entity_id: timer.pet_foco
+                data:
+                  duration: "{{ '%02d:%02d:00' % (minutos // 60, minutos % 60) }}"
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.pet_foco
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.pet_sleep
+              - action: input_select.select_option
+                target:
+                  entity_id: input_select.pet_mood
+                data:
+                  option: pensando
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.pet_message
+                data:
+                  value: "Modo foco: {{ minutos }} minutos."
+              - set_conversation_response: "Modo foco por {{ minutos }} minutos. Vou ficar quietinho."
+          - conditions:
+              - condition: trigger
+                id: fim
+            sequence:
+              - action: timer.cancel
+                target:
+                  entity_id: timer.pet_foco
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.pet_foco
+              - action: input_select.select_option
+                target:
+                  entity_id: input_select.pet_mood
+                data:
+                  option: neutro
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.pet_message
+                data:
+                  value: ""
+              - set_conversation_response: "Modo foco encerrado."
+
+  - id: pet_foco_fim
+    alias: "Pet · fim do modo foco"
+    description: "Quando timer.pet_foco acaba, sai do modo foco e sugere uma pausa."
+    mode: single
+    triggers:
+      - trigger: timer.finished
+        target:
+          entity_id: timer.pet_foco
+    actions:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.pet_foco
+      - action: script.pet_dizer
+        data:
+          humor: feliz
+          mensagem: "{{ ['Acabou o tempo de foco! Levanta e respira um pouco.', 'Foco concluído! Bom trabalho. Hora de uma pausa.'] | random }}"
+
+  # Lembretes por voz. Frases locais (sem LLM), para responder na hora.
+  - id: pet_lembrete_voz
+    alias: "Pet · lembrete por voz"
+    description: >-
+      "Me lembre de desligar o arroz daqui a 15 minutos": ocupa uma das três
+      vagas, liga o timer, grava uma frase simples e pede à IA a frase
+      personalizada em segundo plano. "Cancelar lembretes" apaga todos.
+    mode: queued
+    triggers:
+      - trigger: conversation
+        command:
+          - "(me lembre|me lembra|lembre-me|lembra-me) de {tarefa} (daqui a|daqui|em|dentro de) {quantidade} (minuto|minutos)"
+          - "(daqui a|em|dentro de) {quantidade} (minuto|minutos) (me lembre|me lembra|lembre-me|lembra-me) de {tarefa}"
+        id: minutos
+      - trigger: conversation
+        command:
+          - "(me lembre|me lembra|lembre-me|lembra-me) de {tarefa} (daqui a|daqui|em|dentro de) {quantidade} (hora|horas)"
+          - "(daqui a|em|dentro de) {quantidade} (hora|horas) (me lembre|me lembra|lembre-me|lembra-me) de {tarefa}"
+        id: horas
+      - trigger: conversation
+        command:
+          - "(me lembre|me lembra|lembre-me|lembra-me) de {tarefa} (daqui a|daqui|em|dentro de) meia hora"
+          - "(daqui a|em|dentro de) meia hora (me lembre|me lembra|lembre-me|lembra-me) de {tarefa}"
+        id: meia
+      - trigger: conversation
+        command:
+          - "(me lembre|me lembra|lembre-me|lembra-me) de {tarefa} (daqui a|daqui|em|dentro de) [uma] hora e meia"
+        id: hora_e_meia
+      # "Timer" também vira lembrete: o timer nativo do HA (HassStartTimer) fica
+      # a cargo do app VACA, que não tocou nada no tablet do pet (27/10/2026).
+      - trigger: conversation
+        command:
+          - "[(ajuste|ajusta|coloque|coloca|ponha|põe|bota|ligue|liga|inicie|inicia|crie|cria|marque|marca|programe|programa|defina|define)] [um|o] (timer|temporizador|cronômetro) (de|para|com) {quantidade} (minuto|minutos)"
+        id: timer
+      - trigger: conversation
+        command:
+          - "[(ajuste|ajusta|coloque|coloca|ponha|põe|bota|ligue|liga|inicie|inicia|crie|cria|marque|marca|programe|programa|defina|define)] [um|o] (timer|temporizador|cronômetro) (de|para|com) {quantidade} (hora|horas)"
+        id: timer_horas
+      - trigger: conversation
+        command:
+          - "[(ajuste|ajusta|coloque|coloca|ponha|põe|bota|ligue|liga|inicie|inicia|crie|cria|marque|marca|programe|programa|defina|define)] [um|o] (timer|temporizador|cronômetro) (de|para|com) meia hora"
+        id: timer_meia
+      - trigger: conversation
+        command:
+          - "(cancelar|cancela|cancele|apagar|apaga|apague|parar|para|pare|desligar|desliga|desligue) [o|os] (lembrete|lembretes|timer|timers|temporizador|temporizadores)"
+        id: cancelar
+    actions:
+      - if:
+          - condition: trigger
+            id: cancelar
+        then:
+          - action: timer.cancel
+            target:
+              entity_id:
+                - timer.pet_lembrete_1
+                - timer.pet_lembrete_2
+                - timer.pet_lembrete_3
+          - action: input_text.set_value
+            target:
+              entity_id:
+                - input_text.pet_lembrete_1
+                - input_text.pet_lembrete_2
+                - input_text.pet_lembrete_3
+            data:
+              value: ""
+          - set_conversation_response: "Pronto, apaguei os lembretes."
+          - stop: "Lembretes apagados"
+      - variables:
+          tarefa: "{{ trigger.slots.tarefa | default('') | string | trim }}"
+          minutos: >-
+            {% set palavras = {'um': 1, 'uma': 1, 'dois': 2, 'duas': 2, 'tres': 3, 'três': 3,
+                               'quatro': 4, 'cinco': 5, 'seis': 6, 'sete': 7, 'oito': 8, 'nove': 9,
+                               'dez': 10, 'quinze': 15, 'vinte': 20, 'trinta': 30, 'quarenta': 40,
+                               'quarenta e cinco': 45, 'cinquenta': 50} %}
+            {% if trigger.id in ['meia', 'timer_meia'] %}30
+            {% elif trigger.id == 'hora_e_meia' %}90
+            {% else %}
+              {% set t = trigger.slots.quantidade | default('') | string | lower | trim %}
+              {% set d = t | regex_findall('\d+') %}
+              {% set n = (d | first | int) if d else palavras.get(t, 0) %}
+              {{ n * 60 if trigger.id in ['horas', 'timer_horas'] else n }}
+            {% endif %}
+          timer: "{{ trigger.id.startswith('timer') }}"
+          vaga: >-
+            {% set ns = namespace(v=0) %}
+            {% for i in [1, 2, 3] %}
+              {% if ns.v == 0 and states('timer.pet_lembrete_' ~ i) not in ['active', 'paused'] %}{% set ns.v = i %}{% endif %}
+            {% endfor %}
+            {{ ns.v }}
+          quando: >-
+            {% set h = minutos // 60 %}{% set m = minutos % 60 %}{{ ((h ~ (' hora' if h == 1 else ' horas')) if h else '') ~ (' e ' if h and m else '') ~ ((m ~ (' minuto' if m == 1 else ' minutos')) if m else '') }}
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ (tarefa == '' and not timer) or minutos < 1 or minutos > 1440 }}"
+            sequence:
+              - set_conversation_response: "Não entendi o tempo. Diga, por exemplo: me lembre de olhar o arroz daqui a 15 minutos."
+          - conditions:
+              - condition: template
+                value_template: "{{ vaga == 0 }}"
+            sequence:
+              - set_conversation_response: "Já tenho três lembretes marcados. Diga cancelar lembretes para começar de novo."
+        default:
+          - action: input_text.set_value
+            target:
+              entity_id: "input_text.pet_lembrete_{{ vaga }}"
+            data:
+              value: >-
+                {% if timer %}surpreso|Trim trim! O timer de {{ quando }} acabou!
+                {%- else %}{{ ('surpreso|Tá na hora de ' ~ tarefa | replace('|', ' ') ~ '!')[:255] }}{% endif %}
+          - action: timer.start
+            target:
+              entity_id: "timer.pet_lembrete_{{ vaga }}"
+            data:
+              duration: "{{ '%02d:%02d:00' % (minutos // 60, minutos % 60) }}"
+          - if:
+              - condition: template
+                value_template: "{{ not timer }}"
+            then:
+              - action: script.turn_on
+                target:
+                  entity_id: script.pet_lembrete_preparar
+                data:
+                  variables:
+                    vaga: "{{ vaga }}"
+                    tarefa: "{{ tarefa }}"
+                note: "script.turn_on não espera: a resposta sai já, e a IA trabalha em segundo plano."
+          - set_conversation_response: >-
+              {% if timer %}Combinado! Timer de {{ quando }} ligado. Eu aviso quando acabar.
+              {%- else %}Combinado! Daqui a {{ quando }} eu te lembro de {{ tarefa }}.{% endif %}
+
+  - id: pet_lembrete_tocar
+    alias: "Pet · tocar lembrete"
+    description: >-
+      Quando o timer de uma vaga acaba: toca o alarme do tablet, o pet faz a
+      cara escolhida e fala a frase guardada, mesmo em modo foco ou chamada.
+    mode: queued
+    triggers:
+      - trigger: timer.finished
+        target:
+          entity_id: timer.pet_lembrete_1
+        id: "1"
+      - trigger: timer.finished
+        target:
+          entity_id: timer.pet_lembrete_2
+        id: "2"
+      - trigger: timer.finished
+        target:
+          entity_id: timer.pet_lembrete_3
+        id: "3"
+    actions:
+      - variables:
+          guardado: "{{ states('input_text.pet_lembrete_' ~ trigger.id) }}"
+          humor: >-
+            {% set p = guardado.split('|', 1) %}
+            {{ p[0] if p | length == 2 and p[0] in ['feliz', 'curioso', 'surpreso', 'pensando'] else 'surpreso' }}
+          frase: >-
+            {% set p = guardado.split('|', 1) %}
+            {{ p[1] if p | length == 2 and p[1] | trim != '' else 'Tá na hora do seu lembrete!' }}
+      - action: switch.turn_on
+        target:
+          entity_id: switch.vaca_d2538133b_alarm
+        continue_on_error: true
+        note: "Alarme do app VACA no tablet do pet (troque o id se usar outro tablet)."
+      - delay: "00:00:04"
+      - action: switch.turn_off
+        target:
+          entity_id: switch.vaca_d2538133b_alarm
+        continue_on_error: true
+      - action: script.pet_dizer
+        data:
+          humor: "{{ humor }}"
+          mensagem: "{{ frase }}"
+          forcar: true
+      - action: input_text.set_value
+        target:
+          entity_id: "input_text.pet_lembrete_{{ trigger.id }}"
+        data:
+          value: ""
+
+  # ---------------------------------------------------------------------------
+  # Casa: porta, ventilador, luzes e a Bela
+  # ---------------------------------------------------------------------------
+
+  - id: pet_porta_aberta
+    alias: "Pet · porta da entrada aberta"
+    description: >-
+      Com a porta da entrada aberta por 3 minutos, o pet avisa, mesmo em foco ou
+      chamada, e repete a cada 5 minutos (até 3 avisos). Se fecharem depois do
+      aviso, agradece só na tela.
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: door.opened
+        target:
+          entity_id: binary_sensor.sensor_porta_sala_porta
+        options:
+          for: "00:03:00"
+    actions:
+      - repeat:
+          sequence:
+            - action: script.pet_dizer
+              data:
+                humor: surpreso
+                mensagem: >-
+                  {% if repeat.first %}{{ ['Ei, a porta da entrada está aberta faz 3 minutos! Alguém pode fechar?',
+                                          'Psiu! A porta da entrada ficou aberta. Fecha pra mim?'] | random }}
+                  {% else %}A porta da entrada continua aberta! Fecha, por favor?{% endif %}
+                forcar: true
+            - wait_template: "{{ is_state('binary_sensor.sensor_porta_sala_porta', 'off') }}"
+              timeout: "00:05:00"
+              continue_on_timeout: true
+              note: "wait_template, e não wait_for_trigger: a porta pode ter fechado enquanto o pet falava."
+          until:
+            - "{{ wait.completed or repeat.index >= 3 }}"
+      - if:
+          - condition: state
+            entity_id: binary_sensor.sensor_porta_sala_porta
+            state: "off"
+        then:
+          - action: script.pet_dizer
+            data:
+              humor: feliz
+              mensagem: "Porta fechada. Valeu!"
+              falar: false
+
+  - id: pet_ventilador
+    alias: "Pet · ventilador ligado"
+    description: >-
+      Durante o dia (do nascer ao pôr do sol), agradece quando ligam o
+      ventilador da sala; num dia de calor (pet_clima), com mais alívio.
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: switch.ventilador_sala
+        from: "off"
+        to: "on"
+    conditions:
+      - condition: sun
+        after: sunrise
+        before: sunset
+    actions:
+      - action: script.pet_dizer
+        data:
+          humor: feliz
+          mensagem: >-
+            {% if is_state('input_select.pet_clima', 'calor') %}{{ ['Ufa! Que calor hoje, valeu pelo ventilador!',
+                'Ahh, salvou minha vida! Tá um calor danado lá fora.'] | random }}
+            {% else %}{{ ['Que bom que ligou o ventilador, eu estava com um calor danado!',
+                'Ahh, ventinho! Eu já estava derretendo aqui.',
+                'Valeu pelo ventilador! Tava um calor danado.'] | random }}{% endif %}
+
+  - id: pet_luz_acesa_de_dia
+    alias: "Pet · luz acesa de dia"
+    description: >-
+      Durante o dia, se a luz da sala, do corredor ou da varanda ficar acesa por
+      30 minutos, o pet pede para apagar. Meia hora depois do nascer do sol,
+      lembra também das que ficaram acesas desde a noite.
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id:
+          - switch.interruptor_sala_switch_1
+          - switch.sonoff_corredor
+          - switch.interruptor_sala_switch_2
+        to: "on"
+        for: "00:30:00"
+      - trigger: sun
+        event: sunrise
+        offset: "00:30:00"
+    conditions:
+      - condition: sun
+        after: sunrise
+        before: sunset
+    actions:
+      - variables:
+          luzes:
+            switch.interruptor_sala_switch_1: da sala
+            switch.sonoff_corredor: do corredor
+            switch.interruptor_sala_switch_2: da varanda
+          minimo_min: "{{ 60 if trigger.platform == 'sun' else 30 }}"
+          acesas: >-
+            {% set ns = namespace(l=[]) %}
+            {% for e, nome in luzes.items() if is_state(e, 'on')
+                 and (now() - states[e].last_changed).total_seconds() >= minimo_min * 60 - 5 %}
+              {% set ns.l = ns.l + [nome] %}
+            {% endfor %}
+            {{ ns.l }}
+        note: >-
+          No nascer do sol, só conta luz acesa há 1 h ou mais: as acesas depois
+          disso já foram avisadas pelo gatilho de 30 minutos.
+      - condition: template
+        value_template: "{{ acesas | count > 0 }}"
+      - action: script.pet_dizer
+        data:
+          humor: curioso
+          mensagem: >-
+            {% if acesas | count == 1 %}A luz {{ acesas[0] }} está acesa
+            {%- else %}As luzes {{ acesas[:-1] | join(', ') }} e {{ acesas[-1] }} estão acesas{% endif %} e já é dia!
+            Que tal apagar? É só me pedir.
+
+  - id: pet_comida_bela
+    alias: "Pet · comida da Bela"
+    description: >-
+      Às 13h e às 21h, o pet pergunta por voz se já deram comida para a Bela e
+      espera "sim" ou "não" (script pet_perguntar_bela). Não pergunta se alguém
+      já contou que deu comida nas últimas 2 horas.
+    mode: single
+    triggers:
+      - trigger: time
+        at:
+          - "13:00:00"
+          - "21:00:00"
+    conditions:
+      - alias: "Ninguém anotou comida nas últimas 2 horas"
+        condition: template
+        value_template: >-
+          {% set t = state_attr('input_datetime.pet_bela_comeu', 'timestamp') %}
+          {{ t is none or now().timestamp() - t > 7200 }}
+    actions:
+      - action: script.turn_on
+        target:
+          entity_id: script.pet_perguntar_bela
+
+  - id: pet_bela_voz
+    alias: "Pet · Bela por voz"
+    description: >-
+      "Quando a Bela comeu?" responde a última refeição anotada; "dei comida
+      para a Bela" anota agora (e encerra a pergunta do horário, se houver).
+    mode: queued
+    triggers:
+      - trigger: conversation
+        command:
+          - "(quando|que horas) [que] [a] Bela comeu [hoje]"
+          - "[a] Bela já comeu [hoje]"
+          - "já deram comida (para|pra) [a] Bela [hoje]"
+        id: pergunta
+      - trigger: conversation
+        command:
+          - "[eu] [já] (dei|demos) comida (para|pra|a|à) [a] Bela"
+          - "[eu] [já] alimentei [a] Bela"
+          - "[a] Bela já (foi alimentada|está alimentada|tá alimentada|almoçou|jantou)"
+        id: anotar
+    actions:
+      - if:
+          - condition: trigger
+            id: anotar
+        then:
+          - action: input_datetime.set_datetime
+            target:
+              entity_id: input_datetime.pet_bela_comeu
+            data:
+              timestamp: "{{ now().timestamp() }}"
+          - set_conversation_response: >-
+              Anotado! A Bela comeu às {{ now().hour }}{{ ' horas' if now().minute == 0 else ' e ' ~ now().minute }}.
+        else:
+          - set_conversation_response: >-
+              {% set t = state_attr('input_datetime.pet_bela_comeu', 'timestamp') %}
+              {% if t is none or now().timestamp() - t > 30 * 86400 %}Ainda não anotei nenhuma refeição da Bela.
+              {%- else %}
+                {% set d = t | as_datetime | as_local %}
+                {% set hora = d.hour ~ (' horas' if d.minute == 0 else ' e ' ~ d.minute) %}
+                {% set dias = (now().date() - d.date()).days %}
+                {% if dias == 0 %}A Bela comeu hoje às {{ hora }}.
+                {%- elif dias == 1 %}A última refeição que anotei foi ontem, às {{ hora }}.
+                {%- else %}A última refeição que anotei foi em {{ d.strftime('%d/%m') }}, às {{ hora }}.{% endif %}
+              {%- endif %}
+
+  - id: pet_campainha
+    alias: "Pet · campainha"
+    description: "Quando apertam a campainha da entrada, o pet faz cara de surpreso e avisa."
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.entrada_visitor
+        from: "off"
+        to: "on"
+    actions:
+      - action: script.pet_dizer
+        data:
+          humor: surpreso
+          mensagem: "Tem alguém na porta!"
+          forcar: true
+
+  # Exemplo: troque o device_tracker, a zona e o nome pelos da sua casa.
+  - id: pet_alguem_chegando
+    alias: "Pet · alguém a caminho"
+    description: "Quando o celular da pessoa sai da zona do trabalho, o pet avisa feliz."
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: zone.left
+        target:
+          entity_id: device_tracker.celular_da_pessoa
+        options:
+          zone: zone.trabalho
+    actions:
+      - action: script.pet_dizer
+        data:
+          humor: feliz
+          mensagem: "A Ana saiu do trabalho, chega em uns 30 minutos!"
+
+  - id: pet_bateria
+    alias: "Pet · bateria do tablet"
+    description: >-
+      Bateria do tablet abaixo de 20% (e de novo abaixo de 10%) sem carregar: o
+      pet faz cara de surpreso e pede a tomada. À noite, só na tela.
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.vaca_d2538133b_battery
+        below: 20
+        id: baixa
+      - trigger: numeric_state
+        entity_id: sensor.vaca_d2538133b_battery
+        below: 10
+        id: critica
+    conditions:
+      - condition: state
+        entity_id: binary_sensor.vaca_d2538133b_battery_charging
+        state: "off"
+    actions:
+      - action: script.pet_dizer
+        data:
+          humor: surpreso
+          mensagem: >-
+            {% if trigger.id == 'critica' %}Tô quase desligando! Me coloca na tomada, por favor?
+            {%- else %}Tô ficando sem energia, me coloca na tomada?{% endif %}
+          falar: >-
+            {{ now() > today_at(states('input_datetime.pet_noite_fim'))
+               and now() < today_at(states('input_datetime.pet_noite_inicio')) }}
+
+  - id: pet_aviso_chuva
+    alias: "Pet · aviso de chuva"
+    description: >-
+      A cada 30 minutos, de dia, olha a previsão por hora: se vier chuva nas
+      próximas 2 horas (e ainda não estiver chovendo), avisa uma vez. Depois
+      espera 6 horas antes de avisar de novo.
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: time_pattern
+        minutes: "/30"
+    conditions:
+      - condition: time
+        after: input_datetime.pet_noite_fim
+        before: input_datetime.pet_noite_inicio
+      - alias: "Ainda não está chovendo"
+        condition: not
+        conditions:
+          - condition: state
+            entity_id: weather.home
+            state:
+              - rainy
+              - pouring
+              - lightning-rainy
+      - alias: "Sem aviso nas últimas 6 horas"
+        condition: template
+        value_template: >-
+          {% set t = state_attr('input_datetime.pet_aviso_chuva', 'timestamp') %}
+          {{ t is none or now().timestamp() - t > 6 * 3600 }}
+    actions:
+      - action: weather.get_forecasts
+        target:
+          entity_id: weather.home
+        data:
+          type: hourly
+        response_variable: previsao
+      - variables:
+          vai_chover: >-
+            {% set limite = (now() + timedelta(hours=2)).timestamp() %}
+            {% set ns = namespace(sim=false) %}
+            {% for h in previsao['weather.home'].forecast
+                 if as_timestamp(h.datetime) < limite
+                 and (h.condition in ['pouring', 'lightning-rainy']
+                      or (h.condition == 'rainy' and (h.precipitation | float(0)) >= 0.5)) %}
+              {% set ns.sim = true %}
+            {% endfor %}
+            {{ ns.sim }}
+        note: "O met.no marca 'chuva' até com 0,1 mm; garoa não conta."
+      - condition: template
+        value_template: "{{ vai_chover }}"
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.pet_aviso_chuva
+        data:
+          timestamp: "{{ now().timestamp() }}"
+      - action: script.pet_dizer
+        data:
+          humor: surpreso
+          mensagem: "Vai chover daqui a pouco, se prepare, feche as janelas!"
+
+  - id: pet_clima
+    alias: "Pet · clima"
+    description: >-
+      Compara a temperatura de fora (weather.home) com pet_calor_graus e
+      pet_frio_graus e grava calor, frio ou normal em pet_clima. O rosto só
+      mostra calor ou frio no comentário do tempo (pet_comentario_clima).
+    mode: queued
+    max: 3
+    triggers:
+      - trigger: state
+        entity_id: weather.home
+        attribute: temperature
+      - trigger: state
+        entity_id:
+          - input_number.pet_calor_graus
+          - input_number.pet_frio_graus
+      - trigger: homeassistant
+        event: start
+      - trigger: time_pattern
+        minutes: 5
+    actions:
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.pet_clima
+        data:
+          option: >-
+            {% set t = state_attr('weather.home', 'temperature') %}
+            {% if t is none %}normal
+            {%- elif t | float > states('input_number.pet_calor_graus') | float(29) %}calor
+            {%- elif t | float < states('input_number.pet_frio_graus') | float(21) %}frio
+            {%- else %}normal{% endif %}
+
+  - id: pet_comentario_clima
+    alias: "Pet · comentário do tempo"
+    description: >-
+      Num dia quente (ou frio), quando o clima vira ou quando alguém aparece na
+      sala, o pet comenta ("Tá quente hoje, hein?") com a cara de calor (ou de
+      frio) e volta ao neutro. No máximo uma vez de manhã e uma à tarde, de dia
+      e fora de foco, chamada e demo.
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: input_select.pet_clima
+        to:
+          - calor
+          - frio
+      - trigger: state
+        entity_id: input_boolean.pet_presenca
+        to: "on"
+      - trigger: motion.detected
+        target:
+          entity_id: binary_sensor.vaca_d2538133b_motion
+    conditions:
+      - condition: state
+        entity_id: input_select.pet_clima
+        state:
+          - calor
+          - frio
+      - condition: state
+        entity_id: input_boolean.pet_presenca
+        state: "on"
+      - condition: time
+        after: input_datetime.pet_noite_fim
+        before: input_datetime.pet_noite_inicio
+      - condition: state
+        entity_id: input_boolean.pet_foco
+        state: "off"
+      - condition: state
+        entity_id: input_boolean.pet_demo
+        state: "off"
+      - condition: state
+        entity_id: binary_sensor.pet_pc_em_chamada
+        state: "off"
+      - alias: "Ainda não comentou neste turno (manhã até 13h, tarde depois)"
+        condition: template
+        value_template: >-
+          {% set ultima = state_attr('input_datetime.pet_comentario_clima', 'timestamp') %}
+          {% set virada = today_at('13:00').timestamp() %}
+          {% set inicio = virada if now().timestamp() >= virada else today_at('00:00').timestamp() %}
+          {{ ultima is none or ultima < inicio }}
+    actions:
+      - delay: "00:00:30"
+        note: "Deixa a saudação da chegada (ou a conversa pela câmera) acontecer antes."
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.pet_comentario_clima
+        data:
+          timestamp: "{{ now().timestamp() }}"
+      - variables:
+          clima: "{{ states('input_select.pet_clima') }}"
+          graus: "{{ state_attr('weather.home', 'temperature') | float(0) | round(0) | int }}"
+      - action: script.pet_dizer
+        data:
+          humor: "{{ clima }}"
+          falar: "{{ is_state('input_boolean.pet_falar_saudacao', 'on') }}"
+          pausa: 8
+          mensagem: >-
+            {% if clima == 'calor' %}{{ ['Tá quente hoje, hein? Já são ' ~ graus ~ ' graus lá fora!',
+                                        'Ufa, que calor! Bebe bastante água hoje.',
+                                        'Tá quente hoje, hein? Bom dia pra ficar no ventilador.'] | random }}
+            {%- else %}{{ ['Tá friozinho hoje, hein? Só ' ~ graus ~ ' graus lá fora.',
+                          'Brrr, que frio! Bom dia pra um café quentinho.'] | random }}{% endif %}
+
+  - id: pet_datas_especiais
+    alias: "Pet · datas especiais"
+    description: >-
+      Logo depois da meia-noite (e ao iniciar o HA): aniversário no calendário
+      Birthdays põe chapéu de festa e a faixa "Parabéns"; 24 e 25/12, gorro de
+      Natal; 31/10, cara de abóbora. Nos outros dias, sem enfeite.
+    mode: single
+    triggers:
+      - trigger: time
+        at: "00:00:30"
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: automation_reloaded
+    actions:
+      - action: calendar.get_events
+        target:
+          entity_id: calendar.birthdays
+        data:
+          start_date_time: "{{ today_at('00:00') }}"
+          end_date_time: "{{ today_at('23:59') }}"
+        response_variable: agenda
+        continue_on_error: true
+      - variables:
+          eventos: >-
+            {{ agenda['calendar.birthdays'].events
+               if agenda is defined and agenda and 'calendar.birthdays' in agenda else [] }}
+          acessorio: >-
+            {% set d = now() %}
+            {% if eventos | count > 0 %}festa
+            {%- elif d.month == 12 and d.day in [24, 25] %}natal
+            {%- elif d.month == 10 and d.day == 31 %}halloween
+            {%- else %}nenhum{% endif %}
+          faixa: >-
+            {% if eventos | count > 0 %}
+              {% set nomes = eventos | map(attribute='summary')
+                 | map('regex_replace', '(?i)^\s*anivers[aá]rio d[aoe]s?\s+', '') | list %}
+              {% set texto = nomes | join(' e ') %}
+              {{ texto if texto is search('(?i)parab') else 'Parabéns, ' ~ texto ~ '!' }}
+            {% endif %}
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.pet_acessorio
+        data:
+          option: "{{ acessorio }}"
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.pet_faixa
+        data:
+          value: "{{ faixa | trim }}"
+
+  - id: pet_boa_noite
+    alias: "Pet · boa noite"
+    description: >-
+      "Boa noite" (das 20h às 5h) apaga as luzes da sala, do corredor e da
+      varanda, desliga o ventilador, a TV da sala e o monitor do PC, e avisa se
+      a porta da entrada estiver aberta. Fora desse horário é só um cumprimento.
+    mode: single
+    triggers:
+      - trigger: conversation
+        command:
+          - "boa noite [pet|bichinho]"
+          - "[eu] (vou|tô indo|to indo|estou indo) dormir"
+    actions:
+      - if:
+          - condition: time
+            after: "05:00:00"
+            before: "20:00:00"
+        then:
+          - set_conversation_response: "Boa noite! Tudo bem por aí?"
+          - stop: "Cumprimento fora do horário"
+      - variables:
+          luzes:
+            - switch.interruptor_sala_switch_1
+            - switch.sonoff_corredor
+            - switch.interruptor_sala_switch_2
+          apagou_luz: "{{ luzes | select('is_state', 'on') | list | count > 0 }}"
+          tv_ligada: "{{ states('media_player.lg_sala') not in ['off', 'standby', 'unavailable', 'unknown'] }}"
+          ventilador_ligado: "{{ is_state('switch.ventilador_sala', 'on') }}"
+          monitor: "{{ states('button.g15_desligar_monitor') not in ['unavailable', 'unknown'] }}"
+          porta_aberta: "{{ is_state('binary_sensor.sensor_porta_sala_porta', 'on') }}"
+      - action: switch.turn_off
+        target:
+          entity_id: "{{ luzes }}"
+        continue_on_error: true
+      - action: switch.turn_off
+        target:
+          entity_id: switch.ventilador_sala
+        continue_on_error: true
+      - if:
+          - condition: template
+            value_template: "{{ tv_ligada }}"
+        then:
+          - action: media_player.turn_off
+            target:
+              entity_id: media_player.lg_sala
+            continue_on_error: true
+      - if:
+          - condition: template
+            value_template: "{{ monitor }}"
+        then:
+          - action: button.press
+            target:
+              entity_id: button.g15_desligar_monitor
+            continue_on_error: true
+            note: "Só existe com o PC ligado (HASS.Agent)."
+      - variables:
+          feitos: >-
+            {% set ns = namespace(f=[]) %}
+            {% if apagou_luz %}{% set ns.f = ns.f + ['apaguei as luzes'] %}{% endif %}
+            {% if tv_ligada %}{% set ns.f = ns.f + ['desliguei a TV'] %}{% endif %}
+            {% if ventilador_ligado %}{% set ns.f = ns.f + ['desliguei o ventilador'] %}{% endif %}
+            {% if monitor %}{% set ns.f = ns.f + ['desliguei o monitor'] %}{% endif %}
+            {{ ns.f }}
+      - set_conversation_response: >-
+          {%- set lista = (feitos[:-1] | join(', ') ~ ' e ' ~ feitos[-1]) if feitos | count > 1 else (feitos | join('')) %}
+          Boa noite!
+          {%- if lista %} {{ lista[:1] | upper }}{{ lista[1:] }}.
+          {%- else %} Já estava tudo desligado.{% endif %}
+          {%- if porta_aberta %} Mas atenção: a porta da entrada está aberta, fecha antes de dormir!{% endif %}

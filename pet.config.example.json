@@ -1,0 +1,31 @@
+{
+  "hassUrl": null,
+  "entities": {
+    "mood": "input_select.pet_mood",
+    "message": "input_text.pet_message",
+    "sleep": "input_boolean.pet_sleep",
+    "carinho": "input_button.pet_carinho",
+    "ouvir": "input_button.pet_ouvir",
+    "satellite": null,
+    "speech": null
+  },
+  "agentId": null,
+  "textInput": true,
+  "hint": "Para falar comigo, diga “Ok Nabu” ou segure meu rosto",
+  "shortcuts": [
+    {
+      "label": "Luz da sala",
+      "icon": "lightbulb",
+      "domain": "switch",
+      "service": "toggle",
+      "entity_id": "switch.interruptor_sala_switch_1"
+    },
+    {
+      "label": "Varanda",
+      "icon": "lightbulb",
+      "domain": "switch",
+      "service": "toggle",
+      "entity_id": "switch.interruptor_sala_switch_2"
+    }
+  ]
+}
