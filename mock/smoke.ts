@@ -21,6 +21,7 @@ const entities = {
   ...DEFAULT_CONFIG.entities,
   satellite: 'assist_satellite.pet_mock',
   speech: 'sensor.pet_mock_tts',
+  heard: 'sensor.pet_mock_stt',
 };
 
 function startMock(): Promise<ChildProcess> {
@@ -106,20 +107,24 @@ try {
 
   await post('/mock/set', { entity_id: entities.mood, state: 'triste' });
   await until(() => store.get().mood === 'triste', 'humor triste');
-  await post('/mock/voice', { answer: 'Pronto, feito.' });
+  await post('/mock/voice', { answer: 'Pronto, feito.', question: 'Acende a luz' });
   await until(() => store.get().satellite === 'listening', 'satélite ouvindo');
   await until(
-    () => store.get().satellite === 'responding' && store.get().speech === 'Pronto, feito.' && store.get().speechAt > 0,
+    () => store.get().satellite === 'responding' && store.get().speech === 'Pronto, feito.' && store.get().speechAt > 0 &&
+      store.get().heard === 'Acende a luz' && store.get().heardAt > 0,
     'resposta falada no sensor',
     6000,
   );
-  console.log('✓ cliente recebe humor, satélite e texto da resposta em tempo real');
+  console.log('✓ cliente recebe humor, satélite, texto entendido e texto da resposta em tempo real');
 
   assert.match(await client.ask('acende a luz da sala'), /acendi/);
   console.log('✓ pergunta por texto pelo cliente');
 
   await client.pressCarinho();
-  await until(() => store.get().mood === 'feliz' && store.get().message !== '', 'reação ao carinho');
+  await until(
+    () => store.get().reaction === 'feliz' && store.get().reactionAt > 0 && store.get().message !== '',
+    'reação ao carinho',
+  );
   console.log('✓ carinho aperta o input_button');
 
   await client.pressOuvir();

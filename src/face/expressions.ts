@@ -8,12 +8,37 @@ export const MOODS = [
   'triste',
   'bravo',
   'pensando',
+  'confuso',
+  'piscando',
+  'apaixonado',
+  'sonolento',
   'calor',
   'frio',
   'ouvindo',
 ] as const;
 
 export type Mood = (typeof MOODS)[number];
+
+/**
+ * Reações passageiras (input_select.pet_reacao, além de "nenhuma"): a emoção de uma resposta
+ * ou de um carinho, mostrada por alguns segundos sobre o humor de base. Dormindo, sonolento,
+ * ouvindo, calor e frio são estados, não reações.
+ */
+export const REACTIONS = [
+  'neutro',
+  'feliz',
+  'curioso',
+  'surpreso',
+  'triste',
+  'bravo',
+  'pensando',
+  'confuso',
+  'piscando',
+  'apaixonado',
+] as const;
+export type Reaction = (typeof REACTIONS)[number];
+/** Valor de pet_reacao sem reação. */
+export const NO_REACTION = 'nenhuma';
 
 /** Valores do input_select.pet_clima: o HA compara a temperatura de fora com os limites. */
 export const CLIMATES = ['normal', 'calor', 'frio'] as const;
@@ -59,6 +84,8 @@ export interface FaceParams {
   bob: number;
   /** Tremedeira de frio, de 0 a 1. */
   shiver: number;
+  /** Piscadela: fecha um olho em arco. 1 = olho da direita da tela, -1 = da esquerda. */
+  wink: number;
   color: Rgb;
 }
 
@@ -79,6 +106,7 @@ const neutro: FaceParams = {
   blush: 0,
   bob: 1.2,
   shiver: 0,
+  wink: 0,
   color: [94, 231, 255],
 };
 
@@ -152,6 +180,62 @@ export const EXPRESSIONS: Record<ExpressionName, FaceParams> = {
     bob: 0.6,
     color: [180, 155, 255],
   },
+  // Confuso: um olho maior que o outro, cabeça inclinada, boca torta; o "?" é um extra.
+  confuso: {
+    ...neutro,
+    eyeH: 46,
+    eyeSkew: 0.2,
+    lidTop: 0.04,
+    gazeX: -0.35,
+    gazeY: -0.35,
+    mouthW: 16,
+    mouthCurve: -0.3,
+    mouthOpen: 0.06,
+    tilt: -10,
+    bob: 0.7,
+    color: [190, 235, 120],
+  },
+  // Piscando: sorriso com um olho fechado em arco.
+  piscando: {
+    ...neutro,
+    lidTop: 0,
+    lidBottom: 0.3,
+    mouthW: 30,
+    mouthCurve: 1,
+    mouthOpen: 0.15,
+    tilt: 6,
+    blush: 0.5,
+    bob: 1.8,
+    wink: 1,
+    color: [140, 255, 205],
+  },
+  // Apaixonado: olhos sorridentes, bochecha bem corada e corações subindo (extra).
+  apaixonado: {
+    ...neutro,
+    lidTop: 0,
+    lidBottom: 0.5,
+    mouthW: 26,
+    mouthCurve: 1,
+    mouthOpen: 0.12,
+    tilt: 4,
+    blush: 1,
+    bob: 2,
+    color: [255, 135, 195],
+  },
+  // Sonolento: olhos meio fechados e pesados, balanço lento; vem antes de dormir.
+  sonolento: {
+    ...neutro,
+    eyeOpen: 0.45,
+    lidTop: 0.3,
+    lidAngle: -6,
+    gazeY: 0.35,
+    mouthW: 12,
+    mouthCurve: 0.1,
+    mouthOpen: 0.14,
+    tilt: -3,
+    bob: 1.8,
+    color: [80, 160, 190],
+  },
   // Calor: olhos pesados, boca aberta ofegante, bochecha vermelha; a gota de suor é um extra.
   calor: {
     ...neutro,
@@ -208,6 +292,10 @@ export const EXPRESSIONS: Record<ExpressionName, FaceParams> = {
 
 export function isMood(value: unknown): value is Mood {
   return typeof value === 'string' && (MOODS as readonly string[]).includes(value);
+}
+
+export function isReaction(value: unknown): value is Reaction {
+  return typeof value === 'string' && (REACTIONS as readonly string[]).includes(value);
 }
 
 export function isClimate(value: unknown): value is Climate {

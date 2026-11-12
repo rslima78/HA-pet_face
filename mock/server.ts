@@ -6,7 +6,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { DEFAULT_CONFIG } from '../src/config.ts';
-import { ACCESSORIES, CLIMATES, MOODS } from '../src/face/expressions.ts';
+import { ACCESSORIES, CLIMATES, MOODS, NO_REACTION, REACTIONS } from '../src/face/expressions.ts';
 
 const HA_VERSION = '2026.10.2';
 const PORT = Number(process.env.MOCK_PORT ?? 8124);
@@ -15,6 +15,8 @@ const E = DEFAULT_CONFIG.entities;
 const SATELLITE = 'assist_satellite.pet_mock';
 // Imita o sensor TTS do VACA: texto da resposta do agente de conversa.
 const SPEECH = 'sensor.pet_mock_tts';
+// Imita o sensor STT do VACA: texto reconhecido da fala da pessoa.
+const HEARD = 'sensor.pet_mock_stt';
 const PRESENCE = 'binary_sensor.camera_da_sala_motion_alarm';
 const ARRIVAL = 'binary_sensor.entrada_person';
 const LIGHT = 'switch.interruptor_sala_switch_1';
@@ -63,6 +65,7 @@ function seed(entity_id: string, state: string, attributes: Record<string, unkno
 }
 
 seed(E.mood, 'neutro', { options: [...MOODS], friendly_name: 'Pet humor' });
+seed(E.reaction!, NO_REACTION, { options: [NO_REACTION, ...REACTIONS], friendly_name: 'Pet reação' });
 seed(E.message, '', { min: 0, max: MESSAGE_MAX, mode: 'text', friendly_name: 'Pet mensagem' });
 seed(E.sleep, 'off', { friendly_name: 'Pet dormir' });
 seed(E.carinho, 'unknown', { friendly_name: 'Pet carinho' });
@@ -72,6 +75,7 @@ seed(E.accessory!, 'nenhum', { options: [...ACCESSORIES], friendly_name: 'Pet ac
 seed(E.banner!, '', { min: 0, max: MESSAGE_MAX, mode: 'text', friendly_name: 'Pet faixa' });
 seed(SATELLITE, 'idle', { friendly_name: 'Pet (mock)', supported_features: 3 });
 seed(SPEECH, '', { friendly_name: 'Pet (mock) TTS' });
+seed(HEARD, '', { friendly_name: 'Pet (mock) STT' });
 seed(PRESENCE, 'off', { device_class: 'motion', friendly_name: 'Câmera Sala Motion Alarm' });
 seed(ARRIVAL, 'off', { device_class: 'motion', friendly_name: 'Campainha Entrada Person' });
 seed(LIGHT, 'off', { friendly_name: 'Luz da Sala' });
@@ -153,6 +157,15 @@ function say(text: string, mood: string, durationMs = 3500): [number, () => void
   ];
 }
 
+// Como o script pet_reagir: passa por "nenhuma" (para repetir a mesma reação) e limpa depois de 20 s.
+let reactionTimer: ReturnType<typeof setTimeout> | undefined;
+function react(reaction: string): void {
+  clearTimeout(reactionTimer);
+  setState(E.reaction!, NO_REACTION);
+  setState(E.reaction!, reaction);
+  reactionTimer = setTimeout(() => setState(E.reaction!, NO_REACTION), 20000);
+}
+
 const simulations = {
   arrive(): void {
     setState(ARRIVAL, 'on');
@@ -172,11 +185,15 @@ const simulations = {
       setState(E.sleep, 'on');
     }]]);
   },
-  voice(answer?: string): void {
+  voice(answer?: string, question?: string): void {
     setState(E.sleep, 'off');
     setState(SATELLITE, 'listening');
     runScenario([
-      [2200, () => setState(SATELLITE, 'processing')],
+      [2200, () => {
+        // Como no VACA: o texto reconhecido chega quando a escuta termina.
+        setState(HEARD, (question || 'Que horas são?').slice(0, MESSAGE_MAX));
+        setState(SATELLITE, 'processing');
+      }],
       [3400, () => {
         // Como no HA real: a resposta vai para o sensor do satélite, não para pet_message.
         setState(SPEECH, (answer || 'Claro! Já está feito.').slice(0, MESSAGE_MAX));
@@ -186,12 +203,11 @@ const simulations = {
     ]);
   },
   carinho(): void {
-    // Mesmas frases e duração da automação pet_carinho do pacote HA.
+    // Mesmas frases da automação pet_carinho do pacote HA; a cara feliz é reação passageira.
     const replies = ['Hehe, que carinho bom!', 'Adoro quando você faz isso.', 'De novo, de novo!', 'Obrigado!'];
     setState(E.sleep, 'off');
-    setState(E.mood, 'feliz');
+    react('feliz');
     setState(E.message, replies[Math.floor(Math.random() * replies.length)]);
-    runScenario([[10000, () => setState(E.mood, 'neutro')]]);
   },
   drop(): void {
     for (const client of clients) client.socket.close();
@@ -221,10 +237,13 @@ function callService(domain: string, service: string, data: Record<string, unkno
     return entity;
   };
   const key = `${domain}.${service}`;
-  if (key === 'script.pet_definir_emocao') {
-    const mood = String(data.emocao ?? '');
-    if (!(MOODS as readonly string[]).includes(mood)) throw new ServiceError('invalid_format', `Emoção inválida: ${mood}`);
-    setState(E.mood, mood);
+  if (key === 'script.pet_definir_emocao' || key === 'script.pet_reagir') {
+    const reaction = String(data.emocao ?? '');
+    if (!(REACTIONS as readonly string[]).includes(reaction)) {
+      throw new ServiceError('invalid_format', `Emoção inválida: ${reaction}`);
+    }
+    if (key === 'script.pet_definir_emocao') setState(E.sleep, 'off');
+    react(reaction);
     return;
   }
   for (const id of ids) {
@@ -414,7 +433,10 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<vo
       simulations[path.slice(6) as 'arrive' | 'leave' | 'drop']();
       return reply(200, { ok: true });
     case '/mock/voice':
-      simulations.voice(typeof body.answer === 'string' ? body.answer : undefined);
+      simulations.voice(
+        typeof body.answer === 'string' ? body.answer : undefined,
+        typeof body.question === 'string' ? body.question : undefined,
+      );
       return reply(200, { ok: true });
     default:
       return reply(404, { error: 'not_found' });

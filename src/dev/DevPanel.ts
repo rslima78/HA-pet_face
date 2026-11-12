@@ -1,6 +1,6 @@
 // Painel de desenvolvimento (?dev=1). Força estados só na tela local, sem escrever no HA.
 import { BUILD_ID } from '../build.ts';
-import { ACCESSORIES, CLIMATES, MOODS } from '../face/expressions.ts';
+import { ACCESSORIES, CLIMATES, MOODS, NO_REACTION, REACTIONS } from '../face/expressions.ts';
 import type { FaceRenderer } from '../face/FaceRenderer.ts';
 import { strings } from '../i18n/pt-BR.ts';
 import { PET_EVENT } from '../events.ts';
@@ -77,6 +77,16 @@ export function mountDevPanel(
     buttonGroup(panel, strings.dev.mood, MOODS, (m) => strings.moods[m], (s, m) => s.mood === m, (mood) =>
       store.set({ mood }),
     ),
+    // A reação dura REACTION_MS a partir do clique; o botão fica marcado até outra escolha.
+    buttonGroup(
+      panel,
+      strings.dev.reaction,
+      [NO_REACTION, ...REACTIONS] as const,
+      (v) => (v === NO_REACTION ? strings.dev.noReaction : strings.moods[v]),
+      (s, v) => (s.reaction ?? NO_REACTION) === v,
+      (v) =>
+        store.set(v === NO_REACTION ? { reaction: null, reactionAt: 0 } : { reaction: v, reactionAt: Date.now() }),
+    ),
     buttonGroup(
       panel,
       strings.dev.climate,
@@ -142,7 +152,10 @@ export function mountDevPanel(
     cancelConversation();
     store.set({ satellite: 'listening' });
     conversation = [
-      window.setTimeout(() => store.set({ satellite: 'processing' }), 2200),
+      window.setTimeout(
+        () => store.set({ heard: strings.dev.sampleQuestion, heardAt: Date.now(), satellite: 'processing' }),
+        2200,
+      ),
       window.setTimeout(() => {
         const text = message.value.trim() || strings.dev.sampleAnswer;
         store.set({ speech: text, speechAt: Date.now(), satellite: 'responding' });

@@ -2,12 +2,17 @@
 
 Um tablet velho virou um pet que mora na sala: um rosto animado em tela cheia que reage à casa pelo [Home Assistant](https://www.home-assistant.io/). Ele percebe quando alguém chega, conversa por voz em português, acende a luz, liga a TV, avisa se vai chover, gosta de carinho na tela e dorme à noite.
 
+![As expressões do pet](docs/rostos.png)
+
 <!-- Coloque aqui um GIF curto do pet: ![Pet Face](docs/pet.gif) -->
 <!-- Vídeo: [Veja o pet em ação](https://youtube.com/...) -->
 
 ## O que ele faz
-- **Rosto com humor:** feliz, surpreso, curioso, pensando, com calor, com frio, dormindo, ouvindo, falando (boca animada e legenda).
-- **Conversa por voz** pelo Assist do HA ("Ok Nabu"), com personalidade definida num prompt em português e emoção tirada da própria fala.
+- **Rosto com humor:** 15 expressões (feliz, surpreso, curioso, pensando, confuso, piscando, apaixonado, sonolento, triste, bravo, com calor, com frio, dormindo, ouvindo, neutro), enfeites de festa, Natal e Halloween, e boca animada com legenda quando fala.
+- **Reação passageira:** a emoção da conversa ou do carinho dura alguns segundos e o rosto volta sozinho ao humor de base.
+- **Conversa por voz** pelo Assist do HA ("Ok Nabu"), com personalidade definida num prompt em português e emoção tirada da própria fala. Enquanto pensa, mostra o que entendeu da frase (linha "entendi").
+- **"O que você está vendo?":** manda uma foto da câmera da sala para a IA e descreve o que vê (só quando pedem; a foto não é salva).
+- **Ajusta o próprio tablet:** "fala mais baixo", "fica mudo", "diminui o brilho".
 - **Percebe presença** por sensores de movimento ou pelo rosto na câmera do tablet, e cumprimenta.
 - **Ajuda na casa:** porta aberta, campainha, chuva chegando, luz acesa de dia, bateria do tablet, "boa noite" que desliga tudo.
 - **Cuida de quem está no PC:** lembra de beber água, alongar e descansar os olhos ([docs/PC.md](docs/PC.md)).
@@ -22,7 +27,7 @@ O que foi usado aqui:
 |---|---|
 | Tela | Galaxy Tab A7 Lite com Android 14 (qualquer tablet com navegador serve) |
 | Voz no tablet | app View Assist Companion (VACA) como satélite do Assist |
-| Fala e escuta | HA Cloud (TTS e STT) |
+| Fala e escuta | HA Cloud (STT) e a voz Leda do Gemini pelo OpenRouter (TTS); o HA Cloud também serve para a fala |
 | Conversa | um agente de conversa com LLM no HA (aqui, Claude Haiku pela integração OpenRouter) |
 | Tela cheia | Kiosk Mode (HACS) |
 

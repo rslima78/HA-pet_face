@@ -13,6 +13,10 @@ export const strings = {
     triste: 'Triste',
     bravo: 'Bravo',
     pensando: 'Pensando',
+    confuso: 'Confuso',
+    piscando: 'Piscando',
+    apaixonado: 'Apaixonado',
+    sonolento: 'Sonolento',
     calor: 'Calor',
     frio: 'Frio',
     ouvindo: 'Ouvindo',
@@ -75,6 +79,8 @@ export const strings = {
   dev: {
     title: 'Dev',
     mood: 'Humor',
+    reaction: 'Reação (6 s)',
+    noReaction: 'Nenhuma',
     climate: 'Clima',
     accessory: 'Acessório',
     banner: 'Faixa',
@@ -89,6 +95,7 @@ export const strings = {
     resetAuth: 'Trocar conexão',
     noHa: 'sem HA',
     fps: (n: number) => `${n} fps`,
+    sampleQuestion: 'Como vai estar o tempo hoje?',
     sampleAnswer: 'Bom dia! Hoje faz sol, com máxima de 29 graus.',
   },
 };

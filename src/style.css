@@ -58,12 +58,39 @@ body {
   height: 100%;
 }
 
-.caption {
+/* Pé da tela: linha "entendi" em cima, legenda embaixo, centralizadas e longe das bordas
+   (pensando também na tela redonda). */
+.lines {
   position: absolute;
   left: 50%;
   bottom: max(4vh, env(safe-area-inset-bottom));
   transform: translateX(-50%);
-  max-width: min(90vw, 900px);
+  width: min(90vw, 900px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4em;
+  pointer-events: none;
+}
+
+/* O que o pet entendeu da voz: menor e apagado, para não competir com a resposta. */
+.heard {
+  max-width: 100%;
+  color: var(--muted);
+  font-size: clamp(14px, 2.6vmin, 26px);
+  font-style: italic;
+  line-height: 1.3;
+  text-align: center;
+  overflow-wrap: anywhere;
+  opacity: 0.85;
+}
+
+.heard:not(.visible) {
+  display: none;
+}
+
+.caption {
+  max-width: 100%;
   padding: 0.5em 1.1em;
   border-radius: 1em;
   background: rgba(255, 255, 255, 0.08);
@@ -77,6 +104,13 @@ body {
 
 .caption.visible {
   opacity: 1;
+}
+
+/* Legenda escondida sai do fluxo (ainda esmaecendo no pé), para a linha "entendi" não
+   ficar flutuando acima de uma caixa vazia enquanto o pet pensa. */
+.caption:not(.visible) {
+  position: absolute;
+  bottom: 0;
 }
 
 /* Faixa de data especial ("Parabéns!"): fixa no topo enquanto o HA mantiver o texto. */

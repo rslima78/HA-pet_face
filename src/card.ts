@@ -20,7 +20,14 @@ interface CardConfig {
   text_input?: boolean;
   /** Dica no pé da tela; null ou "" esconde. */
   hint?: string | null;
+  /** Atraso da voz nas respostas de conversa, em ms (ver PetConfig.speechDelayMs). */
+  speech_delay_ms?: number;
+  speech_tail_ms?: number;
   dev?: boolean;
+}
+
+function nonNegative(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 interface Hass {
@@ -63,6 +70,8 @@ class PetFaceCard extends HTMLElement {
       agentId: config.agent_id ?? null,
       textInput: config.text_input ?? true,
       hint: config.hint === undefined ? DEFAULT_CONFIG.hint : config.hint || null,
+      speechDelayMs: nonNegative(config.speech_delay_ms),
+      speechTailMs: nonNegative(config.speech_tail_ms),
     };
     this.dev = config.dev === true;
     this.restart();

@@ -26,9 +26,31 @@ input_select:
       - triste
       - bravo
       - pensando
+      - confuso
+      - piscando
+      - apaixonado
+      - sonolento
       - calor
       - frio
       - ouvindo
+  # Reação passageira sobre o humor (carinho, emoção de uma resposta). A página
+  # mostra a reação por 6 s contados da mudança (até 20 s enquanto o pet fala);
+  # o script pet_reagir escolhe e volta para "nenhuma". O humor (pet_mood) não muda.
+  pet_reacao:
+    name: "Pet · reação"
+    icon: mdi:emoticon-wink-outline
+    options:
+      - nenhuma
+      - neutro
+      - feliz
+      - curioso
+      - surpreso
+      - triste
+      - bravo
+      - pensando
+      - confuso
+      - piscando
+      - apaixonado
   # Calculado por "Pet · clima" pela temperatura de weather.home. Alimenta o
   # comentário do tempo (pet_comentario_clima), que mostra a cara de calor ou frio.
   pet_clima:
@@ -453,22 +475,85 @@ script:
         data:
           option: neutro
 
+  # Reação passageira: a emoção aparece por 6 s sobre o humor (até 20 s enquanto
+  # o pet fala) e some sozinha. Passa por "nenhuma" antes, para a mesma reação
+  # duas vezes seguidas também contar como mudança (a página mede o tempo pelo
+  # last_changed). Quem chama usa script.turn_on, para não esperar o script.
+  pet_reagir:
+    alias: "Pet · reagir"
+    description: >-
+      Mostra uma emoção passageira no rosto do pet por alguns segundos (a
+      resposta inteira, se ele estiver falando), sem mudar o humor de base. Não
+      acorda o pet: dormindo, a página ignora a reação.
+    icon: mdi:emoticon-wink-outline
+    mode: restart
+    fields:
+      emocao:
+        name: "Emoção"
+        description: >-
+          Reação: neutro, feliz, curioso, surpreso, triste, bravo, pensando,
+          confuso, piscando ou apaixonado.
+        required: true
+        selector:
+          select:
+            options:
+              - neutro
+              - feliz
+              - curioso
+              - surpreso
+              - triste
+              - bravo
+              - pensando
+              - confuso
+              - piscando
+              - apaixonado
+    sequence:
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.pet_reacao
+        data:
+          option: nenhuma
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.pet_reacao
+        data:
+          option: "{{ emocao }}"
+      - delay:
+          seconds: 20
+        note: >-
+          Quem mede a duração é a página (6 s parado, até 20 s falando; ver
+          src/state/derive.ts). Aqui só limpa depois, para um reinício do HA não
+          restaurar a reação com last_changed novo e mostrá-la de novo.
+      - if:
+          - condition: template
+            value_template: "{{ is_state('input_select.pet_reacao', emocao) }}"
+        then:
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.pet_reacao
+            data:
+              option: nenhuma
+
   # Muda a expressão do rosto. Usado pela automação "Pet · emoção pela fala" e
   # por quem quiser (automações, painéis). Não precisa ficar exposto ao Assist:
   # chamar uma ferramenta custa ao LLM uma ida e volta inteira (vários segundos).
+  # Desde a fase 1 do PLANO-BROOKESIA, vira uma reação passageira (pet_reagir).
   pet_definir_emocao:
     alias: "Pet · definir emoção"
     description: >-
       Muda a expressão do rosto do pet no tablet da sala. Use a cada resposta
-      para mostrar como você se sente: feliz, curioso, surpreso ou pensando; use
-      neutro para voltar ao normal. A expressão volta ao neutro
-      sozinha depois de um minuto.
+      para mostrar como você se sente: feliz, curioso, surpreso, pensando,
+      confuso (não entendeu), piscando (brincadeira) ou apaixonado; use
+      neutro para voltar ao normal. A expressão dura alguns segundos e volta
+      sozinha ao humor de antes.
     icon: mdi:emoticon-happy-outline
     mode: restart
     fields:
       emocao:
         name: "Emoção"
-        description: "Expressão do rosto: neutro, feliz, curioso, surpreso ou pensando."
+        description: >-
+          Expressão do rosto: neutro, feliz, curioso, surpreso, pensando,
+          confuso, piscando ou apaixonado.
         required: true
         selector:
           select:
@@ -478,16 +563,21 @@ script:
               - curioso
               - surpreso
               - pensando
+              - confuso
+              - piscando
+              - apaixonado
     sequence:
       - action: input_boolean.turn_off
         target:
           entity_id: input_boolean.pet_sleep
         note: "Se alguém mudou a emoção, alguém está interagindo com o pet: ele está acordado."
-      - action: input_select.select_option
+      - action: script.turn_on
         target:
-          entity_id: input_select.pet_mood
+          entity_id: script.pet_reagir
         data:
-          option: "{{ emocao }}"
+          variables:
+            emocao: "{{ emocao }}"
+        note: "Sem esperar os 6 s da reação."
 
   # Exposto ao Assist como ferramenta do LLM: o Assist só entrega o tempo atual,
   # e sem isto o LLM inventa a previsão de amanhã.
@@ -522,6 +612,215 @@ script:
             {% endfor %}
             {{ {'hoje': now().date() | string, 'dias': ns.dias} }}
       - stop: "Previsão obtida"
+        response_variable: resultado
+
+  # Fase 4 do PLANO-BROOKESIA. Privacidade: a foto da câmera da sala vai para a
+  # tarefa de IA (OpenRouter) e não é salva (sem camera.snapshot, nada em /media).
+  # Só roda quando alguém pede por voz: nenhuma automação chama este script.
+  # Dormindo ou à noite, recusa sem tirar foto.
+  pet_o_que_ve:
+    alias: "Pet · o que estou vendo"
+    description: >-
+      Olha a sala pela câmera e descreve o que vê, ou responde a uma pergunta
+      sobre a sala (ex.: "tem alguém no sofá?"). Use só quando a pessoa pedir
+      para você olhar ou ver a sala. A foto não é guardada. Devolve em "texto"
+      o que dizer.
+    icon: mdi:eye-outline
+    mode: single
+    fields:
+      pergunta:
+        name: "Pergunta"
+        description: "O que a pessoa quer saber sobre a sala. Deixe vazio para uma descrição geral."
+        required: false
+        selector:
+          text:
+    sequence:
+      - if:
+          - condition: state
+            entity_id: input_boolean.pet_sleep
+            state: "on"
+        then:
+          - variables:
+              recusa:
+                texto: "Estou dormindo agora, de olhos fechados. Amanhã eu olho a sala para você."
+          - stop: "Dormindo: não olha a sala."
+            response_variable: recusa
+      - if:
+          - condition: time
+            after: input_datetime.pet_noite_inicio
+            before: input_datetime.pet_noite_fim
+        then:
+          - variables:
+              recusa:
+                texto: "De noite eu não olho a câmera, para deixar a casa descansar. Pergunte de novo de manhã."
+          - stop: "Noite: não olha a sala."
+            response_variable: recusa
+      - action: script.turn_on
+        target:
+          entity_id: script.pet_reagir
+        data:
+          variables:
+            emocao: curioso
+      - action: ai_task.generate_data
+        continue_on_error: true
+        data:
+          task_name: "pet o que ve"
+          instructions: >-
+            Você é o Pet, o bichinho virtual da casa, olhando a sala pela câmera
+            agora. {% if pergunta | default('') | trim %}Responda a esta pergunta
+            sobre a imagem: "{{ pergunta | trim }}".{% else %}Diga o que vê.{% endif %}
+            Responda em até duas frases curtas, em português do Brasil, num tom
+            simpático, sem se apresentar nem cumprimentar. Não identifique pessoas
+            pelo nome nem descreva detalhes íntimos ou o que estiver em telas e
+            documentos. Se a imagem estiver escura ou sem nada claro, diga isso.
+            Sem emojis nem formatação; o texto será falado.
+          attachments:
+            - media_content_id: media-source://camera/camera.camera_da_sala_hd_stream
+              media_content_type: image/jpeg
+        response_variable: visto
+      - variables:
+          resultado:
+            texto: >-
+              {{ visto.data if visto is defined and visto.data is string and visto.data | trim
+                 else 'Não consegui ver a sala agora; a câmera não respondeu.' }}
+      - stop: "Descrição pronta"
+        response_variable: resultado
+
+  # Fase 5 do PLANO-BROOKESIA: a IA ajusta o próprio tablet. O volume vem do
+  # rótulo pet_satelite (convenção do VACA: number.<id>_voice_volume), como na
+  # automação de brilho. Nunca o Echo Show. O switch.<id>_mute do VACA desliga o
+  # MICROFONE, não a voz: por isso "mudo" é volume 0 e o microfone nunca é tocado.
+  pet_volume:
+    alias: "Pet · volume do pet"
+    description: >-
+      Muda o volume da voz do próprio pet (o tablet da sala): subir, descer,
+      definir em porcentagem, mudo ou som. Só serve para o tablet do pet, não
+      para TV, caixas de som nem outros aparelhos da casa. Devolve em "texto" a
+      confirmação para falar.
+    icon: mdi:volume-high
+    mode: queued
+    max: 3
+    fields:
+      acao:
+        name: "Ação"
+        description: "subir, descer, definir, mudo ou som"
+        required: true
+        selector:
+          select:
+            options:
+              - subir
+              - descer
+              - definir
+              - mudo
+              - som
+      valor:
+        name: "Valor"
+        description: "Volume em porcentagem (0 a 100), para definir ou som (padrão 60)."
+        required: false
+        selector:
+          number:
+            min: 0
+            max: 100
+            unit_of_measurement: "%"
+    sequence:
+      - variables:
+          satelite: >-
+            {{ label_entities('pet_satelite') | select('match', 'assist_satellite\.') | first
+               | default('assist_satellite.desconhecido') }}
+          controle_volume: "{{ satelite | replace('assist_satellite.', 'number.') ~ '_voice_volume' }}"
+      - if:
+          - condition: template
+            value_template: "{{ states[controle_volume] is none }}"
+        then:
+          - variables:
+              erro:
+                texto: "Não achei o controle de volume do meu tablet."
+          - stop: "Sem satélite com o rótulo pet_satelite."
+            response_variable: erro
+      - variables:
+          vmin: "{{ state_attr(controle_volume, 'min') | float(0) }}"
+          vmax: "{{ state_attr(controle_volume, 'max') | float(15) }}"
+          atual: "{{ ((states(controle_volume) | float(vmin) - vmin) / (vmax - vmin) * 100) | round(0) }}"
+          pedido: >-
+            {% if acao == 'subir' %}{{ atual + 20 }}
+            {% elif acao == 'descer' %}{{ atual - 20 }}
+            {% elif acao == 'mudo' %}0
+            {% elif acao == 'som' %}{{ valor | default(60) | float(60) }}
+            {% else %}{{ valor | default(atual) | float(atual) }}{% endif %}
+          alvo: "{{ (vmin + ([0, [100, pedido | float(0)] | min] | max) / 100 * (vmax - vmin)) | round(0) }}"
+          final: "{{ ((alvo - vmin) / (vmax - vmin) * 100) | round(0) | int }}"
+      - action: number.set_value
+        target:
+          entity_id: "{{ controle_volume }}"
+        data:
+          value: "{{ alvo }}"
+      - variables:
+          resultado:
+            volume: "{{ final }}"
+            texto: >-
+              {% if acao == 'mudo' %}Pronto, fiquei quietinho. Para eu voltar a falar, peça para aumentar o volume.
+              {% elif acao == 'som' %}Pronto, voltei a falar, volume em {{ final }} por cento.
+              {% elif acao == 'subir' and atual >= 100 %}O volume já está no máximo.
+              {% elif acao == 'descer' and atual <= 0 %}O volume já está no mínimo.
+              {% else %}Pronto, volume em {{ final }} por cento.{% endif %}
+      - stop: "Volume ajustado."
+        response_variable: resultado
+
+  # O brilho pedido vai para o ajuste do dia; a automação "Pet · brilho da tela"
+  # aplica (na hora, se acordado). Assim ele sobrevive a dormir e acordar.
+  pet_brilho:
+    alias: "Pet · brilho da tela do pet"
+    description: >-
+      Muda o brilho da tela do próprio pet (o tablet da sala): mais, menos ou
+      definir em porcentagem. Só serve para o tablet do pet, não para luzes nem
+      outras telas da casa. Devolve em "texto" a confirmação para falar.
+    icon: mdi:brightness-6
+    mode: queued
+    max: 3
+    fields:
+      acao:
+        name: "Ação"
+        description: "mais, menos ou definir"
+        required: true
+        selector:
+          select:
+            options:
+              - mais
+              - menos
+              - definir
+      valor:
+        name: "Valor"
+        description: "Brilho em porcentagem (1 a 100), só para definir."
+        required: false
+        selector:
+          number:
+            min: 1
+            max: 100
+            unit_of_measurement: "%"
+    sequence:
+      - variables:
+          bmin: "{{ state_attr('input_number.pet_brilho_dia', 'min') | float(1) }}"
+          bmax: "{{ state_attr('input_number.pet_brilho_dia', 'max') | float(100) }}"
+          atual: "{{ states('input_number.pet_brilho_dia') | float(60) }}"
+          pedido: >-
+            {% if acao == 'mais' %}{{ atual + 20 }}
+            {% elif acao == 'menos' %}{{ atual - 20 }}
+            {% else %}{{ valor | default(atual) | float(atual) }}{% endif %}
+          final: "{{ ([bmin, [bmax, pedido | float(atual)] | min] | max) | round(0) | int }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.pet_brilho_dia
+        data:
+          value: "{{ final }}"
+      - variables:
+          resultado:
+            brilho: "{{ final }}"
+            texto: >-
+              {% if is_state('input_boolean.pet_sleep', 'on') %}Combinado: quando eu acordar, a tela fica com brilho de {{ final }} por cento.
+              {% elif acao == 'mais' and atual >= bmax %}A tela já está no máximo.
+              {% elif acao == 'menos' and atual <= bmin %}A tela já está no mínimo.
+              {% else %}Pronto, brilho em {{ final }} por cento.{% endif %}
+      - stop: "Brilho ajustado."
         response_variable: resultado
 
   # O pet acorda, faz uma cara, mostra a frase e a fala pelo satélite do tablet.
@@ -1327,6 +1626,36 @@ automation:
             after: input_datetime.pet_noite_inicio
             before: input_datetime.pet_noite_fim
     actions:
+      - if:
+          - condition: trigger
+            id:
+              - noite
+              - soneca
+          - condition: state
+            entity_id: input_boolean.pet_sleep
+            state: "off"
+        then:
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.pet_mood
+            data:
+              option: sonolento
+          - delay:
+              seconds: 20
+          - if:
+              - condition: not
+                conditions:
+                  - condition: state
+                    entity_id: input_select.pet_mood
+                    state: sonolento
+            then:
+              - stop: "O humor mudou durante o bocejo; não dorme agora."
+            note: >-
+              Se nesses 20 s algo trocou o humor (saudação, conversa), não dorme
+              agora; à noite a "soneca" tenta de novo em 5 minutos.
+        note: >-
+          Com alguém por perto (início da noite ou fim da soneca), boceja antes:
+          cara de sono por 20 s. Sala vazia e reinício do HA dormem direto.
       - action: input_boolean.turn_on
         target:
           entity_id: input_boolean.pet_sleep
@@ -1396,7 +1725,9 @@ automation:
       - variables:
           emocao: >-
             {% set texto = states(sensor_fala) | lower %}
-            {% if texto is search('desculp|não consegui|nao consegui|infelizmente|não sei|não encontrei|não posso') %}{% set e = 'pensando' %}
+            {% if texto is search('não entendi|nao entendi|não entendo|não sei|nao sei|como assim|confus') %}{% set e = 'confuso' %}
+            {% elif texto is search('desculp|não consegui|nao consegui|infelizmente|não encontrei|não posso') %}{% set e = 'pensando' %}
+            {% elif texto is search('haha|kkk|piada|brincadeira|brincando') %}{% set e = 'piscando' %}
             {% elif texto is search('uau|nossa|incrível|que surpresa') %}{% set e = 'surpreso' %}
             {% elif texto is search('parabéns|que bom|adoro|ótimo|pronto|feito|legal|obrigad') %}{% set e = 'feliz' %}
             {% elif texto is search('\?\s*$') %}{% set e = 'curioso' %}
@@ -1491,6 +1822,10 @@ automation:
           - triste
           - bravo
           - pensando
+          - confuso
+          - piscando
+          - apaixonado
+          - sonolento
           - calor
           - frio
         for: "00:01:00"
@@ -1513,11 +1848,36 @@ automation:
         data:
           option: neutro
 
+  - id: pet_acordado_sem_sono
+    alias: "Pet · acordar tira a cara de sono"
+    description: >-
+      Quando o modo dormir desliga e o humor ainda é "dormindo", volta ao
+      neutro. Antes da reação passageira, o carinho trocava o humor e cobria
+      isso; agora ele só mostra uma reação, e o pet ficava acordado com cara
+      de sono.
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.pet_sleep
+        from: "on"
+        to: "off"
+    conditions:
+      - condition: state
+        entity_id: input_select.pet_mood
+        state: dormindo
+    actions:
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.pet_mood
+        data:
+          option: neutro
+
   - id: pet_carinho
     alias: "Pet · reagir ao carinho"
     description: >-
       Tocar no rosto do pet aperta input_button.pet_carinho. Ele acorda, fica
-      feliz por 10 segundos e responde com uma frase curta.
+      feliz por alguns segundos (reação passageira, sem mudar o humor) e
+      responde com uma frase curta.
     mode: restart
     triggers:
       - trigger: state
@@ -1529,28 +1889,19 @@ automation:
       - action: input_boolean.turn_off
         target:
           entity_id: input_boolean.pet_sleep
-      - action: input_select.select_option
+      - action: script.turn_on
         target:
-          entity_id: input_select.pet_mood
+          entity_id: script.pet_reagir
         data:
-          option: feliz
+          variables:
+            emocao: "{{ ['feliz', 'feliz', 'apaixonado'] | random }}"
+        note: "Na maioria das vezes feliz; às vezes apaixonado (com corações)."
       - action: input_text.set_value
         target:
           entity_id: input_text.pet_message
         data:
           value: >-
             {{ ['Hehe, que carinho bom!', 'Adoro quando você faz isso.', 'De novo, de novo!', 'Obrigado!'] | random }}
-      - delay: "00:00:10"
-      - if:
-          - condition: state
-            entity_id: input_select.pet_mood
-            state: feliz
-        then:
-          - action: input_select.select_option
-            target:
-              entity_id: input_select.pet_mood
-            data:
-              option: neutro
 
   # Uso do PC. Os lembretes não falam em chamada (binary_sensor.pet_pc_em_chamada)
   # nem no modo foco. Os tempos vêm dos ajustes pet_pc_* e pet_foco_minutos.

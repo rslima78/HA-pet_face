@@ -15,6 +15,8 @@ export interface PetConfig {
   hassUrl: string | null;
   entities: {
     mood: string;
+    /** input_select com a reação passageira (nenhuma, feliz, curioso…); null desliga. */
+    reaction: string | null;
     message: string;
     sleep: string;
     carinho: string;
@@ -24,6 +26,8 @@ export interface PetConfig {
     satellite: string | null;
     /** Sensor com o texto da resposta falada (ex.: sensor.vaca_<id>_tts); opcional. */
     speech: string | null;
+    /** Sensor com o texto reconhecido pela voz (ex.: sensor.vaca_<id>_stt); opcional. */
+    heard: string | null;
     /** input_select com o clima de fora (normal, calor, frio); null desliga. */
     climate: string | null;
     /** input_select com o acessório de data especial (nenhum, festa, natal, halloween); null desliga. */
@@ -37,6 +41,13 @@ export interface PetConfig {
   textInput: boolean;
   /** Dica de como falar com o pet, no pé da tela quando ele está parado; null esconde. */
   hint: string | null;
+  /**
+   * Atraso da voz nas respostas de conversa (ms): quanto a boca espera depois que o satélite
+   * entra em responding e quanto continua depois do idle. 0 = segue o satélite. Depende da voz:
+   * com a Leda pelo OpenRouter, o som sai ~3 s depois e o idle vem ~1,5 s antes do fim.
+   */
+  speechDelayMs: number;
+  speechTailMs: number;
   shortcuts: Shortcut[];
 }
 
@@ -44,12 +55,14 @@ export const DEFAULT_CONFIG: PetConfig = {
   hassUrl: null,
   entities: {
     mood: 'input_select.pet_mood',
+    reaction: 'input_select.pet_reacao',
     message: 'input_text.pet_message',
     sleep: 'input_boolean.pet_sleep',
     carinho: 'input_button.pet_carinho',
     ouvir: 'input_button.pet_ouvir',
     satellite: null,
     speech: null,
+    heard: null,
     climate: 'input_select.pet_clima',
     accessory: 'input_select.pet_acessorio',
     banner: 'input_text.pet_faixa',
@@ -57,6 +70,8 @@ export const DEFAULT_CONFIG: PetConfig = {
   agentId: null,
   textInput: true,
   hint: strings.hint,
+  speechDelayMs: 0,
+  speechTailMs: 0,
   shortcuts: [],
 };
 

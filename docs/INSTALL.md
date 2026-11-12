@@ -70,10 +70,14 @@ Use só sensores do cômodo do tablet. A campainha fica de fora de propósito, p
 | `input_datetime.pet_ultima_saudacao` | carimbo para o intervalo entre saudações |
 | `timer.pet_ausencia` | contagem de ausência |
 | `script.pet_aplicar_padroes` | grava os padrões |
-| `script.pet_definir_emocao` | muda a expressão do rosto (usado pela automação "emoção pela fala"; não precisa ser exposto) |
+| `script.pet_definir_emocao` | muda a expressão do rosto por alguns segundos, como reação (usado pela automação "emoção pela fala"; não precisa ser exposto) |
+| `input_select.pet_reacao`, `script.pet_reagir` | reação passageira sobre o humor: a página mostra por 6 s (a resposta inteira, se o pet estiver falando); usada pelo carinho e por `pet_definir_emocao` |
+| Expressões | 15 humores: dormindo, neutro, feliz, curioso, surpreso, triste, bravo, pensando, confuso, piscando, apaixonado, sonolento, calor, frio, ouvindo. Reações: as passageiras entre elas (sem dormindo, sonolento, calor, frio, ouvindo) |
 | `script.pet_previsao_do_tempo` | previsão de hoje e dos próximos 3 dias para o LLM (**expor ao Assist**; usa `weather.home`) |
 | `input_number.pet_brilho_dia`, `input_number.pet_brilho_dormindo` | brilho da tela do tablet acordado e dormindo |
-| 8 automações `Pet · …` | presença, acordar e saudar, dormir, acordar pela voz, emoção pela fala, brilho da tela, humor volta ao normal, carinho |
+| `script.pet_o_que_ve` | "o que você está vendo?": manda uma foto da câmera da sala para a tarefa de IA padrão e devolve a descrição (**expor ao Assist**; troque `camera.camera_da_sala_hd_stream` pela sua câmera; a foto não é salva, e o script recusa com o pet dormindo ou à noite) |
+| `script.pet_volume`, `script.pet_brilho` | a IA ajusta o volume (subir, descer, mudo) e o brilho do próprio tablet (**expor ao Assist**; acha o satélite pelo rótulo `pet_satelite`) |
+| 9 automações `Pet · …` | presença, acordar e saudar, dormir, acordar pela voz, emoção pela fala, brilho da tela, humor volta ao normal, carinho, acordar tira a cara de sono |
 | Automações da casa `Pet · …` | porta da entrada aberta (3 min), ventilador ligado de dia, luz acesa de dia (30 min), comida da Bela (13h e 21h) |
 | Mais automações da casa | campainha, alguém a caminho (saiu do trabalho), bateria do tablet, aviso de chuva, "boa noite" (desliga tudo e confere a porta), Bela por voz (`input_datetime.pet_bela_comeu`) |
 | `input_select.pet_clima`, `input_number.pet_calor_graus`, `input_number.pet_frio_graus` | clima de fora; alimenta o comentário do tempo |
@@ -148,13 +152,16 @@ views:
         entities:
           satellite: assist_satellite.vaca_<id>   # do tablet
           speech: sensor.vaca_<id>_tts            # texto da resposta falada
+          heard: sensor.vaca_<id>_stt             # o que a pessoa falou (linha "entendi")
         # opcionais: agent_id, text_input: false, dev: true,
         #   hint: "texto da dica no pé da tela" ("" esconde), entities.ouvir: null (desliga o toque longo)
 ```
 
 4. No tablet, logado como `Pet`: **Perfil → Painel padrão neste dispositivo → Pet Tablet**.
 
-`speech` é o texto da resposta que o VACA fala; com ele, a legenda mostra a resposta de cada conversa.
+`speech` é o texto da resposta que o VACA fala; com ele, a legenda mostra a resposta de cada conversa. `heard` é o texto que a voz reconheceu: aparece pequeno, entre aspas, acima da legenda, enquanto o pet pensa e fala.
+
+**Boca e legenda no tempo do som (opcional):** algumas vozes (por exemplo, as do Gemini) demoram alguns segundos para gerar o áudio, e o satélite marca `responding` antes de o som começar e volta a `idle` antes de ele acabar. Para a boca não mexer adiantada, use `speech_delay_ms` (espera antes de falar; aqui, `3000`) e `speech_tail_ms` (quanto a boca continua depois do `idle`; aqui, `1500`). O padrão é 0. Vale só para respostas de conversa, não para os avisos do pet.
 
 **Tela cheia (sem cabeçalho e barra lateral do HA):** instale **Kiosk Mode** pelo HACS (*NemesisRE/kiosk-mode*; o HACS registra o recurso sozinho) e acrescente ao painel, no topo da configuração:
 

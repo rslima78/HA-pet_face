@@ -2,6 +2,7 @@
   "hassUrl": "http://localhost:8124",
   "entities": {
     "satellite": "assist_satellite.pet_mock",
-    "speech": "sensor.pet_mock_tts"
+    "speech": "sensor.pet_mock_tts",
+    "heard": "sensor.pet_mock_stt"
   }
 }

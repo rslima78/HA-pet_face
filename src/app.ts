@@ -4,7 +4,7 @@ import type { PetConfig } from './config.ts';
 import { PET_EVENT } from './events.ts';
 import { FaceRenderer } from './face/FaceRenderer.ts';
 import { strings } from './i18n/pt-BR.ts';
-import { deriveDecor, deriveFace, type PetViewState } from './state/derive.ts';
+import { deriveDecor, deriveFace, trackReply, type PetViewState, type SpeechTiming } from './state/derive.ts';
 import type { Store } from './state/store.ts';
 import { mountAsk } from './ui/ask.ts';
 
@@ -39,9 +39,15 @@ export function mountPetView(
   faceHost.setAttribute('role', 'img');
   faceHost.setAttribute('aria-label', strings.faceLabel);
 
+  // Pé da tela: o que o pet entendeu da voz, logo acima da legenda da resposta.
+  const lines = document.createElement('div');
+  lines.className = 'lines';
+  const heard = document.createElement('div');
+  heard.className = 'heard';
   const caption = document.createElement('div');
   caption.className = 'caption';
   caption.setAttribute('aria-live', 'polite');
+  lines.append(heard, caption);
 
   const offline = document.createElement('div');
   offline.className = 'offline';
@@ -65,7 +71,7 @@ export function mountPetView(
   const banner = document.createElement('div');
   banner.className = 'banner';
 
-  root.append(faceHost, banner, caption, hint, offline);
+  root.append(faceHost, banner, lines, hint, offline);
 
   const face = new FaceRenderer(faceHost, {
     onPet: () => {
@@ -83,6 +89,12 @@ export function mountPetView(
   // A legenda depende do tempo (some depois de alguns segundos); o próprio resultado
   // diz quando renderizar de novo.
   let refreshTimer: number | undefined;
+  const timing: SpeechTiming = { delayMs: config.speechDelayMs, tailMs: config.speechTailMs };
+  // Começo e fim de cada resposta de conversa, no relógio da página (o do HA pode estar adiantado).
+  const unsubscribeReply = store.subscribe((state, previous) => {
+    const patch = trackReply(previous.satellite, state.satellite, Date.now());
+    if (patch) store.set(patch);
+  });
   const render = (): void => {
     const now = Date.now();
     const state = store.get();
@@ -91,7 +103,7 @@ export function mountPetView(
       store.set({ listenRequestAt: 0 });
       return;
     }
-    const target = deriveFace(state, now);
+    const target = deriveFace(state, now, timing);
     face.setState(target.expression, target.talking);
     const decor = deriveDecor(state);
     face.setAccessory(decor.accessory);
@@ -99,6 +111,8 @@ export function mountPetView(
     banner.classList.toggle('visible', decor.banner !== null);
     if (target.caption) caption.textContent = target.caption;
     caption.classList.toggle('visible', target.caption !== null);
+    if (target.heard) heard.textContent = target.heard;
+    heard.classList.toggle('visible', target.heard !== null);
     hint.classList.toggle('visible', target.hint && Boolean(config.hint));
     offline.hidden = state.connection !== 'offline';
     clearTimeout(refreshTimer);
@@ -130,6 +144,7 @@ export function mountPetView(
   return {
     face,
     destroy() {
+      unsubscribeReply();
       unsubscribe();
       clearTimeout(refreshTimer);
       face.destroy();

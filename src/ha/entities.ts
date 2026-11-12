@@ -6,6 +6,7 @@ import {
   normalizeAccessory,
   normalizeClimate,
   normalizeMood,
+  normalizeReaction,
   normalizeSatellite,
   type PetViewState,
 } from '../state/derive.ts';
@@ -53,7 +54,7 @@ export function applyEntityDiff(states: StateMap, event: EntityDiffEvent): State
 
 export type HaViewPatch = Pick<
   PetViewState,
-  'mood' | 'climate' | 'accessory' | 'banner' | 'sleep' | 'message' | 'messageAt' | 'satellite' | 'speech' | 'speechAt'
+  'mood' | 'reaction' | 'reactionAt' | 'climate' | 'accessory' | 'banner' | 'sleep' | 'message' | 'messageAt' | 'satellite' | 'speech' | 'speechAt' | 'heard' | 'heardAt'
 >;
 
 const NO_VALUE = new Set(['unknown', 'unavailable']);
@@ -61,12 +62,14 @@ const NO_VALUE = new Set(['unknown', 'unavailable']);
 export function watchedEntityIds(entities: PetConfig['entities']): string[] {
   return [
     entities.mood,
+    entities.reaction,
     entities.message,
     entities.sleep,
     entities.carinho,
     entities.ouvir,
     entities.satellite,
     entities.speech,
+    entities.heard,
     entities.climate,
     entities.accessory,
     entities.banner,
@@ -87,9 +90,14 @@ export function mapStates(
 ): { patch: HaViewPatch; missing: string[] } {
   const message = text(states, entities.message, now);
   const speech = text(states, entities.speech, now);
+  const heard = text(states, entities.heard, now);
+  const reactionRaw = text(states, entities.reaction, now);
+  const reaction = normalizeReaction(reactionRaw.value);
   return {
     patch: {
       mood: normalizeMood(states[entities.mood]?.s),
+      reaction,
+      reactionAt: reaction ? reactionRaw.at : 0,
       climate: entities.climate ? normalizeClimate(states[entities.climate]?.s) : 'normal',
       accessory: entities.accessory ? normalizeAccessory(states[entities.accessory]?.s) : 'nenhum',
       banner: text(states, entities.banner, now).value,
@@ -99,6 +107,8 @@ export function mapStates(
       satellite: entities.satellite ? normalizeSatellite(states[entities.satellite]?.s) : 'idle',
       speech: speech.value,
       speechAt: speech.at,
+      heard: heard.value,
+      heardAt: heard.at,
     },
     missing: watchedEntityIds(entities).filter((id) => !(id in states)),
   };

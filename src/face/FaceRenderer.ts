@@ -28,6 +28,8 @@ const HOLD_MS = 700;
 /** Quanto o dedo pode andar e ainda contar como segurar (px de tela); mais que isso é carinho. */
 const HOLD_SLOP_PX = 14;
 const HEART_LIFE_MS = 1400;
+/** Apaixonado: um coração novo a cada intervalo destes. */
+const LOVE_HEART_MS = 900;
 
 type NumericKey = Exclude<keyof FaceParams, 'color'>;
 const NUMERIC_KEYS: readonly NumericKey[] = [
@@ -47,6 +49,7 @@ const NUMERIC_KEYS: readonly NumericKey[] = [
   'blush',
   'bob',
   'shiver',
+  'wink',
 ];
 
 type Attrs = Record<string, string | number>;
@@ -102,6 +105,7 @@ export class FaceRenderer {
   private readonly rings: readonly SVGCircleElement[];
   private readonly heartLayer: SVGGElement;
   private readonly sweat: SVGPathElement;
+  private readonly question: SVGTextElement;
   private readonly accessories: Record<Exclude<Accessory, 'nenhum'>, SVGGElement>;
   private readonly onPet?: () => void;
   private readonly onHold?: () => void;
@@ -111,8 +115,9 @@ export class FaceRenderer {
   private current: FaceParams = { ...EXPRESSIONS.neutro };
   private transitioning = true;
   private accessory: Accessory = 'nenhum';
-  private extras = { zzz: 0, dots: 0, rings: 0, sweat: 0 };
+  private extras = { zzz: 0, dots: 0, rings: 0, sweat: 0, question: 0 };
   private hearts: Heart[] = [];
+  private nextLoveHeart = 0;
 
   private gaze = { x: 0, y: 0 };
   private gazeTarget = { x: 0, y: 0 };
@@ -171,6 +176,13 @@ export class FaceRenderer {
     this.dots = [0, 1, 2].map((i) =>
       el('circle', { cx: CX + 105 + i * 16, cy: 72 - i * 10, r: 4 + i * 1.5, opacity: 0 }, extraLayer),
     );
+    // "?" do confuso, flutuando ao lado da cabeça.
+    this.question = el(
+      'text',
+      { 'font-family': 'system-ui, sans-serif', 'font-weight': 800, 'font-size': 34, opacity: 0 },
+      extraLayer,
+    );
+    this.question.textContent = '?';
     this.heartLayer = el('g', { fill: BLUSH }, this.svg);
 
     container.append(this.svg);
@@ -368,7 +380,14 @@ export class FaceRenderer {
       dots: weight(this.expression === 'pensando', this.extras.dots),
       rings: weight(this.expression === 'ouvindo', this.extras.rings),
       sweat: weight(this.expression === 'calor' && now >= this.petUntil, this.extras.sweat),
+      question: weight(this.expression === 'confuso' && now >= this.petUntil, this.extras.question),
     };
+
+    // Apaixonado: corações sobem sem parar, um de cada vez.
+    if (this.expression === 'apaixonado' && now >= this.nextLoveHeart) {
+      this.spawnHearts(now, 1);
+      this.nextLoveHeart = now + LOVE_HEART_MS;
+    }
   }
 
   private updateGaze(now: number, dt: number, asleep: boolean): void {
@@ -438,7 +457,11 @@ export class FaceRenderer {
   private drawEye(eye: EyeParts, p: FaceParams, gx: number, gy: number, color: string): void {
     const scale = 1 + eye.side * p.eyeSkew;
     const w = p.eyeW * scale;
-    const hh = Math.max(1.5, p.eyeH * scale * p.eyeOpen * this.blinkFactor);
+    // Piscadela: o olho do lado escolhido vira um arco (pálpebra de baixo quase no topo).
+    // side -1 é o olho da direita da tela, fechado com wink positivo.
+    const wink = clamp(eye.side === -1 ? p.wink : -p.wink, 0, 1);
+    const hh = Math.max(1.5, p.eyeH * scale * p.eyeOpen * this.blinkFactor * (1 - 0.35 * wink));
+    const lidBottom = p.lidBottom + (0.86 - p.lidBottom) * wink;
     const radius = Math.min(w * 0.6, hh);
     eye.group.setAttribute(
       'transform',
@@ -457,7 +480,7 @@ export class FaceRenderer {
       cx: w * 0.35,
       cy: -hh * 0.45,
       r: Math.min(w, hh) * 0.18,
-      opacity: hh > 14 ? 0.85 : 0,
+      opacity: hh > 14 && wink < 0.5 ? 0.85 : 0,
     });
 
     // Pálpebra de cima: linha inclinada; y(x) = base + tan(ângulo) * x * lado.
@@ -471,7 +494,7 @@ export class FaceRenderer {
 
     // Pálpebra de baixo: elipse que sobe e deixa o olho em arco (^ ^).
     const ry = hh * 1.4 + 10;
-    const top = hh - p.lidBottom * 2 * hh;
+    const top = hh - lidBottom * 2 * hh;
     setAttrs(eye.lidBottom, { cx: 0, cy: top + ry, rx: w * 1.5, ry });
   }
 
@@ -491,7 +514,15 @@ export class FaceRenderer {
   }
 
   private drawExtras(now: number, t: number, color: string): void {
-    const { zzz, dots, rings, sweat } = this.extras;
+    const { zzz, dots, rings, sweat, question } = this.extras;
+
+    setAttrs(this.question, {
+      x: CX + EYE_DX + 62,
+      y: EYE_Y - 52 + Math.sin(t * 2.2) * 5,
+      transform: `rotate(${Math.sin(t * 1.4) * 10} ${CX + EYE_DX + 72} ${EYE_Y - 64})`,
+      fill: color,
+      opacity: question * 0.9,
+    });
 
     // Gota de suor escorrendo ao lado do olho direito, em ciclo.
     const drip = (t / SWEAT_CYCLE_S) % 1;
@@ -537,8 +568,8 @@ export class FaceRenderer {
     });
   }
 
-  private spawnHearts(now: number): void {
-    for (let i = 0; i < 3; i++) {
+  private spawnHearts(now: number, count = 3): void {
+    for (let i = 0; i < count; i++) {
       this.hearts.push({
         node: el('path', { d: 'M0 6C-12-4-6-14 0-7C6-14 12-4 0 6Z', opacity: 0 }, this.heartLayer),
         born: now + i * 140,

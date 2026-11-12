@@ -8,6 +8,7 @@ const E = {
   ...DEFAULT_CONFIG.entities,
   satellite: 'assist_satellite.tablet',
   speech: 'sensor.tablet_tts',
+  heard: 'sensor.tablet_stt',
 };
 const NOW = 1_800_000_000_000;
 const at = (s: string, changedAt = 0) => ({ s, changedAt });
@@ -42,12 +43,14 @@ test('mapStates traduz as entidades do contrato', () => {
   const { patch, missing } = mapStates(
     {
       'input_select.pet_mood': at('curioso'),
+      'input_select.pet_reacao': at('feliz', NOW - 500),
       'input_text.pet_message': at('Oi!', NOW - 2000),
       'input_boolean.pet_sleep': at('on'),
       'input_button.pet_carinho': at('2026-10-22T10:00:00+00:00'),
       'input_button.pet_ouvir': at('unknown'),
       'assist_satellite.tablet': at('listening'),
       'sensor.tablet_tts': at('A luz está acesa.', NOW - 1000),
+      'sensor.tablet_stt': at('A luz está acesa?', NOW - 1500),
       'input_select.pet_clima': at('calor'),
       'input_select.pet_acessorio': at('festa'),
       'input_text.pet_faixa': at('Parabéns!'),
@@ -57,6 +60,8 @@ test('mapStates traduz as entidades do contrato', () => {
   );
   assert.deepEqual(patch, {
     mood: 'curioso',
+    reaction: 'feliz',
+    reactionAt: NOW - 500,
     climate: 'calor',
     accessory: 'festa',
     banner: 'Parabéns!',
@@ -66,6 +71,8 @@ test('mapStates traduz as entidades do contrato', () => {
     satellite: 'listening',
     speech: 'A luz está acesa.',
     speechAt: NOW - 1000,
+    heard: 'A luz está acesa?',
+    heardAt: NOW - 1500,
   });
   assert.deepEqual(missing, []);
 });
@@ -79,6 +86,8 @@ test('mapStates: entidades ausentes viram padrões e são listadas', () => {
   const { patch, missing } = mapStates({}, E, NOW);
   assert.deepEqual(patch, {
     mood: 'neutro',
+    reaction: null,
+    reactionAt: 0,
     climate: 'normal',
     accessory: 'nenhum',
     banner: '',
@@ -88,6 +97,8 @@ test('mapStates: entidades ausentes viram padrões e são listadas', () => {
     satellite: 'idle',
     speech: '',
     speechAt: 0,
+    heard: '',
+    heardAt: 0,
   });
   assert.deepEqual(missing, watchedEntityIds(E));
 });
@@ -102,7 +113,7 @@ test('mapStates: texto unknown/unavailable vira vazio, sem horário', () => {
 });
 
 test('mapStates sem satélite nem sensor de fala não os cobra', () => {
-  const entities = { ...E, satellite: null, speech: null };
+  const entities = { ...E, satellite: null, speech: null, heard: null };
   const { patch, missing } = mapStates({}, entities, NOW);
   assert.equal(patch.satellite, 'idle');
   assert.ok(!missing.some((id) => id.startsWith('assist_satellite') || id.startsWith('sensor.')));
@@ -124,4 +135,18 @@ test('mapStates: clima e acessório desconhecidos viram normal e nenhum', () => 
   );
   assert.equal(patch.climate, 'normal');
   assert.equal(patch.accessory, 'nenhum');
+});
+
+test('mapStates: reação nenhuma ou desconhecida vira null, sem horário', () => {
+  for (const state of ['nenhuma', 'dormindo', 'unknown', 'unavailable']) {
+    const { patch } = mapStates({ 'input_select.pet_reacao': at(state, NOW - 100) }, E, NOW);
+    assert.equal(patch.reaction, null);
+    assert.equal(patch.reactionAt, 0);
+  }
+});
+
+test('mapStates sem entidade de reação não a cobra', () => {
+  const { patch, missing } = mapStates({}, { ...E, reaction: null }, NOW);
+  assert.equal(patch.reaction, null);
+  assert.ok(!missing.includes('input_select.pet_reacao'));
 });
